@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.pyc]
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+
+# Logseq TUI Cache
+.logseq_tui_cache/
+
+# IDE files
+.vscode/
+.idea/
