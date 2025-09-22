@@ -19,8 +19,9 @@ def parse_properties(block_content: str) -> Dict[str, str]:
     pattern = re.compile(r'^\s*(\S+)::\s*(.*)')
     lines = block_content.split('\n')
     for line in lines:
-        # 移除前面的 "- "
-        match = pattern.match(line.lstrip('- '))
+        # 移除行首的任意空白（包括\t）、可选的 "- " 以及更多的空白
+        cleaned_line = re.sub(r'^\s*-\s*', '', line)
+        match = pattern.match(cleaned_line)
         if match:
             key, value = match.group(1).strip(), match.group(2).strip()
             # 确保键和值都存在

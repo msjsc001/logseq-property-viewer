@@ -54,7 +54,7 @@ class SelectionDialog(Screen):
 # --- 主应用 ---
 
 class LogseqTUI(App):
-    TITLE = "Logseq 键值查询工具 v0.1"
+    TITLE = "Logseq 键值查询工具 v0.3"
 
     DEFAULT_CSS = """
     Screen { overflow: hidden; }
@@ -390,9 +390,10 @@ class LogseqTUI(App):
             
             # 3. 在缓存数据上执行搜索
             results = self._perform_search_on_cache(all_blocks, query)
-            
-            # 4. 更新UI
-            self.call_from_thread(self.update_search_results, results, path)
+
+            # 4. 更新UI - 【状态同步修复】在这里同时更新两个页面的数据
+            self.call_from_thread(self.update_analysis_results, all_blocks, path) # 先更新统计页面的总数据
+            self.call_from_thread(self.update_search_results, results, path)      # 再更新查询页的筛选结果
         except Exception as e:
             self.call_from_thread(self.on_worker_error, f"查询时出错: {e}")
 
@@ -432,16 +433,21 @@ class LogseqTUI(App):
         for btn in self.query(Button).filter("#search_button, #analyze_button, #build_cache_button"): btn.disabled = False
 
     def update_analysis_results(self, all_blocks: List[Dict], path: str):
-        self.all_blocks_data = all_blocks
-        self.log_status(f"[bold green]分析完成！共扫描 {len(all_blocks)} 个带属性的块。[/]")
+        if self.all_blocks_data != all_blocks:
+            self.all_blocks_data = all_blocks
+            self.log_status(f"[bold green]分析完成！共扫描 {len(all_blocks)} 个带属性的块。[/]")
+            
+            # 【修改】更新新的联想输入系统
+            self.all_prop_keys = sorted(Counter(key for block in all_blocks for key in block['properties'].keys()).keys())
+            selection_list = self.query_one("#prop_key_selection_list", SelectionList)
+            selection_list.clear_options()
+            # 【修复】增加非空判断
+            if self.all_prop_keys:
+                selection_list.add_options([Selection(prop, prop) for prop in self.all_prop_keys])
+            
+            save_config({"graph_path": path})
         
-        # 【修改】更新新的联想输入系统
-        self.all_prop_keys = sorted(Counter(key for block in all_blocks for key in block['properties'].keys()).keys())
-        selection_list = self.query_one("#prop_key_selection_list", SelectionList)
-        selection_list.clear_options()
-        selection_list.add_options([Selection(prop, prop) for prop in self.all_prop_keys])
-        
-        save_config({"graph_path": path})
+        # 【状态同步修复】分析和查询都可能调用此方法，所以解锁按钮的操作移到 on_worker_done
         for btn in self.query(Button).filter("#search_button, #analyze_button, #build_cache_button"): btn.disabled = False
 
     def run_build_cache(self, path: str, silent=False):
