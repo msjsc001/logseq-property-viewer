@@ -2,7 +2,8 @@
 
 这是一个独立于 Logseq 软件之外的高性能终端工具，用于对 Logseq 知识库中的 Markdown 文件进行高级的**属性查询**和**数据统计**，并以友好的终端用户界面（TUI）展示结果。
 
-<img alt="PixPin_2025-09-22_17-55-18" src="https://github.com/user-attachments/assets/38655228-f595-4502-9d4a-867cde065cae" />
+<img alt="PixPin_2025-09-22_17-59-48" src="https://github.com/user-attachments/assets/3d0fd97d-179f-4e6e-ab40-417f8fed490f" />
+
 
 ---
 
