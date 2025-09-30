@@ -2,7 +2,7 @@
 
 这是一个独立于 Logseq 软件之外的高性能桌面工具，用于对 Logseq 知识库中的 Markdown 文件进行高级的**属性查询**和**数据统计**，并以现代化的图形用户界面（GUI）展示结果。
 
-<img alt="应用截图" src="https://github.com/user-attachments/assets/placeholder.png" />
+![20210606180518](https://github.com/user-attachments/assets/44dd628b-0520-4afa-8367-154613091f37)
 
 
 ---
