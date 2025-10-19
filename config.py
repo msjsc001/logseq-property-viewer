@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 import json
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, List
 import datetime
 
 CONFIG_FILE = Path.home() / ".logseq_query_config.json"
@@ -101,4 +101,114 @@ def clear_filters(graph_path: str = None) -> None:
         config["column_filters"] = cf
     else:
         config["column_filters"] = {}
+    save_config(config)
+
+
+# ---- 以下为“高级属性查询-排序记忆”的持久化工具函数 ----
+
+def get_sort_memory(config: Dict[str, Any]) -> Dict[str, Any]:
+    """获取配置中的 query_sort_memory 字段（若不存在则返回空字典）。"""
+    qsm = config.get("query_sort_memory")
+    return qsm if isinstance(qsm, dict) else {}
+
+
+def _sanitize_sort_model(sort_model: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """清理排序模型，确保字段合法且顺序稳定。"""
+    sanitized: List[Dict[str, Any]] = []
+    for index, item in enumerate(sort_model or []):
+        if not isinstance(item, dict):
+            continue
+        col = item.get("colId") or item.get("field")
+        sort = item.get("sort")
+        if not col or sort not in ("asc", "desc"):
+            continue
+        sort_index = item.get("sortIndex")
+        sanitized.append({
+            "colId": str(col),
+            "sort": sort,
+            "sortIndex": sort_index if isinstance(sort_index, int) else index,
+        })
+    return sanitized
+
+
+def _sanitize_column_order(column_order: List[Any]) -> List[str]:
+    """清理列顺序列表，仅保留非空字符串并保持原有顺序。"""
+    if not isinstance(column_order, list):
+        return []
+    filtered = [str(item) for item in column_order if isinstance(item, str) and item]
+    return _unique(filtered)
+
+
+def get_sort_for_query(graph_path: str, query_raw: str) -> Dict[str, Any]:
+    """
+    读取指定 graph_path + 查询原文的排序配置。
+    返回格式: {'sortModel': [...], 'columnOrder': [...]}
+    """
+    if not graph_path or not query_raw:
+        return {"sortModel": [], "columnOrder": []}
+    config = load_config()
+    qsm = get_sort_memory(config)
+    entry = qsm.get(graph_path)
+    if not isinstance(entry, dict):
+        return {"sortModel": [], "columnOrder": []}
+    sort_info = entry.get(query_raw)
+    if not isinstance(sort_info, dict):
+        return {"sortModel": [], "columnOrder": []}
+    sort_model = sort_info.get("sortModel")
+    column_order = sort_info.get("columnOrder")
+    return {
+        "sortModel": _sanitize_sort_model(sort_model) if isinstance(sort_model, list) else [],
+        "columnOrder": _sanitize_column_order(column_order),
+    }
+
+
+def save_sort_for_query(
+    graph_path: str,
+    query_raw: str,
+    sort_model: List[Dict[str, Any]] = None,
+    column_order: List[str] = None,
+) -> None:
+    """
+    保存指定 graph_path + 查询原文的排序配置。
+    sort_model 来自 Ag-Grid 的 getSortModel 数据；column_order 为当前显示列顺序。
+    允许仅更新其中一项。
+    """
+    if not graph_path or not query_raw:
+        return
+    graph_key = graph_path.strip()
+    query_key = query_raw.strip()
+    config = load_config()
+    qsm = get_sort_memory(config)
+    graph_entry = qsm.get(graph_key)
+    if not isinstance(graph_entry, dict):
+        graph_entry = {}
+    entry = graph_entry.get(query_key)
+    if not isinstance(entry, dict):
+        entry = {}
+    if sort_model is not None:
+        entry["sortModel"] = _sanitize_sort_model(sort_model)
+    if column_order is not None:
+        entry["columnOrder"] = _sanitize_column_order(column_order)
+    entry["updated_at"] = datetime.datetime.now().isoformat()
+    graph_entry[query_key] = entry
+    qsm[graph_key] = graph_entry
+    config["query_sort_memory"] = qsm
+    save_config(config)
+
+
+def clear_sort_memory(graph_path: str = None) -> None:
+    """
+    清除排序记忆：
+    - 指定 graph_path: 仅清除该路径下所有查询的排序记忆
+    - 未指定: 清除所有路径的排序记忆
+    """
+    config = load_config()
+    qsm = get_sort_memory(config)
+    if graph_path:
+        graph_key = graph_path.strip()
+        if graph_key in qsm:
+            qsm.pop(graph_key, None)
+    else:
+        qsm = {}
+    config["query_sort_memory"] = qsm
     save_config(config)

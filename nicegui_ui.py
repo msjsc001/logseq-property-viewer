@@ -8,7 +8,16 @@ from nicegui import ui, app
 
 # 从项目中导入核心逻辑模块
 from core import _process_single_file
-from config import load_config, save_config, get_filters_for_path, save_filters_for_path, clear_filters
+from config import (
+    load_config,
+    save_config,
+    get_filters_for_path,
+    save_filters_for_path,
+    clear_filters,
+    get_sort_for_query,
+    save_sort_for_query,
+    clear_sort_memory,
+)
 import cache
 
 # --- 核心逻辑适配层 (保持不变) ---
@@ -97,17 +106,33 @@ def _perform_search_on_cache(all_blocks: List[Dict], query: str) -> List[Dict]:
 class AppUI:
     def __init__(self):
         self.app_state = {
-            "all_blocks_data": [], "current_search_results": [], "all_table_columns": [],
-            "selected_table_columns": [], "all_prop_keys": [], "filter_seen": [], "filter_search_term": "",
+            "all_blocks_data": [],
+            "current_search_results": [],
+            "all_table_columns": [],
+            "selected_table_columns": [],
+            "all_prop_keys": [],
+            "filter_seen": [],
+            "filter_search_term": "",
+            "current_sort_model": [],
+            "saved_column_order": [],
+            "current_column_order": [],
+            "current_graph_path": "",
+            "current_query_raw": "",
         }
         self.checkboxes = []
         self.right_panel_expanded = True
+        self.suppress_column_order_event = False
         self.build_ui()
 
     def get_all_buttons(self):
         return [
-            self.search_button, self.filter_columns_button, self.analyze_button,
-            self.build_cache_button, self.clear_cache_button
+            self.search_button,
+            self.filter_columns_button,
+            self.analyze_button,
+            self.build_cache_button,
+            self.clear_filters_button,
+            self.clear_sort_button,
+            self.clear_cache_button,
         ]
 
     def _unique(self, seq):
@@ -138,6 +163,31 @@ class AppUI:
             save_filters_for_path(path, selected, seen)
         except Exception as e:
             self.status_log.push(f"保存列过滤偏好失败: {e}")
+
+    async def _persist_column_order(self, order: List[str], log_message: str = ""):
+        """将当前列顺序写入配置文件。"""
+        path = self.app_state.get("current_graph_path")
+        query = self.app_state.get("current_query_raw")
+        if not path or not query:
+            return
+        all_columns = self.app_state.get("all_table_columns", [])
+        valid_columns = [col for col in order if col in all_columns]
+        if not valid_columns:
+            return
+        existing = list(self.app_state.get("saved_column_order", []))
+        if valid_columns == existing:
+            self.app_state["current_column_order"] = list(valid_columns)
+            return
+        self.app_state["saved_column_order"] = list(valid_columns)
+        self.app_state["current_column_order"] = list(valid_columns)
+        try:
+            await run_in_executor(save_sort_for_query, path, query, None, valid_columns)
+            if log_message:
+                self.status_log.push(log_message)
+            else:
+                self.status_log.push(f"列顺序已更新（共 {len(valid_columns)} 列）。")
+        except Exception as e:
+            self.status_log.push(f"列顺序保存失败: {e}")
 
     def on_filter_checkbox_change(self, checked: bool, col_name: str):
         """复选框变更时更新选择并持久化，并即时刷新表格"""
@@ -203,6 +253,11 @@ class AppUI:
             if not query:
                 ui.notify('错误: 查询语句不能为空！', color='negative', icon='warning')
                 return
+            self.app_state["current_graph_path"] = path
+            self.app_state["current_query_raw"] = query
+            self.app_state["current_sort_model"] = []
+            self.app_state["saved_column_order"] = []
+            self.app_state["current_column_order"] = []
             self.status_log.push("正在静默更新缓存...")
             await handle_build_cache(path, self.status_log.push, silent=True)
             self.status_log.push(f"正在查询 '{query}'...")
@@ -225,6 +280,9 @@ class AppUI:
                 self.app_state["all_table_columns"] = []
                 self.app_state["selected_table_columns"] = []
                 self.app_state["filter_seen"] = []
+                self.app_state["current_sort_model"] = []
+                self.app_state["saved_column_order"] = []
+                self.app_state["current_column_order"] = []
                 ui.notify('未找到匹配的结果。', icon='info')
             else:
                 # 计算列集合：包含 'page' 与属性列（排除 id/content）
@@ -250,6 +308,21 @@ class AppUI:
                 self.app_state["all_table_columns"] = all_cols
                 self.app_state["selected_table_columns"] = selected_new
                 self.app_state["filter_seen"] = seen_new
+
+                sort_info = await run_in_executor(get_sort_for_query, path, query)
+                loaded_sort_model = sort_info.get("sortModel", []) if isinstance(sort_info, dict) else []
+                loaded_column_order = sort_info.get("columnOrder", []) if isinstance(sort_info, dict) else []
+                filtered_sort_model = [
+                    item for item in loaded_sort_model
+                    if (item.get("colId") or item.get("field")) in self.app_state["all_table_columns"]
+                ]
+                filtered_column_order = [
+                    col for col in loaded_column_order
+                    if col in self.app_state["all_table_columns"]
+                ]
+                self.app_state["current_sort_model"] = filtered_sort_model
+                self.app_state["saved_column_order"] = list(filtered_column_order)
+                self.app_state["current_column_order"] = list(filtered_column_order)
                 
                 # 初次查询即写回（确保“已知道的列”被记住）
                 await run_in_executor(save_filters_for_path, path, selected_new, seen_new)
@@ -261,10 +334,46 @@ class AppUI:
 
     def update_table_columns(self):
         """动态构建 Ag-Grid 的列定义并刷新表格。"""
+        selected_columns = list(self.app_state.get("selected_table_columns", []))
+        sort_model_raw = self.app_state.get("current_sort_model", []) or []
+        saved_order = list(self.app_state.get("saved_column_order", []))
+
+        ordered_columns = [col for col in saved_order if col in selected_columns]
+        appended = False
+        for col in selected_columns:
+            if col not in ordered_columns:
+                ordered_columns.append(col)
+                appended = True
+        if not saved_order and ordered_columns:
+            self.app_state["saved_column_order"] = list(ordered_columns)
+        elif appended and ordered_columns:
+            asyncio.create_task(
+                self._persist_column_order(ordered_columns, "检测到新列，已更新列顺序记忆。")
+            )
+        self.app_state["current_column_order"] = list(ordered_columns)
+
+        normalized_sort = []
+        for item in sorted(
+            sort_model_raw,
+            key=lambda x: x.get("sortIndex") if isinstance(x.get("sortIndex"), int) else 0
+        ):
+            if not isinstance(item, dict):
+                continue
+            col = item.get("colId") or item.get("field")
+            sort_dir = item.get("sort")
+            if col in ordered_columns and sort_dir in ("asc", "desc"):
+                normalized_sort.append({
+                    "colId": col,
+                    "sort": sort_dir,
+                    "sortIndex": item.get("sortIndex") if isinstance(item.get("sortIndex"), int) else len(normalized_sort),
+                })
+
+        for idx, entry in enumerate(normalized_sort):
+            entry["sortIndex"] = idx
+        sort_lookup = {entry["colId"]: entry for entry in normalized_sort}
+
         column_defs = []
-        selected_columns = self.app_state.get("selected_table_columns", [])
-        
-        for key in selected_columns:
+        for key in ordered_columns:
             col_def = {
                 'headerName': '所属页面' if key == 'page' else key,
                 'field': key,
@@ -274,14 +383,39 @@ class AppUI:
             }
             if key == 'page':
                 col_def['headerClass'] = 'font-bold'
+            sort_entry = sort_lookup.get(key)
+            if sort_entry:
+                col_def['sort'] = sort_entry['sort']
+                col_def['sortIndex'] = sort_entry['sortIndex']
             column_defs.append(col_def)
-        
+
+        sort_model_payload = [dict(entry) for entry in normalized_sort]
+
         new_options = dict(self.results_table.options)
         new_options['columnDefs'] = column_defs
         new_options['rowData'] = self.app_state.get("current_search_results", [])
+        if sort_model_payload:
+            new_options['sortModel'] = [dict(entry) for entry in sort_model_payload]
+        else:
+            new_options.pop('sortModel', None)
+        self.app_state["current_sort_model"] = [dict(entry) for entry in sort_model_payload]
+
+        self.suppress_column_order_event = True
         self.results_table.options = new_options
         self.filter_columns_button.set_enabled(bool(self.app_state.get("current_search_results")))
         self.results_table.update()
+
+        async def apply_column_and_sort():
+            try:
+                await self._apply_saved_sort_model()
+            finally:
+                self.suppress_column_order_event = False
+
+        ui.timer(
+            0.05,
+            lambda: asyncio.create_task(apply_column_and_sort()),
+            once=True,
+        )
 
     def update_filter_dialog(self):
         """重绘筛选器对话框的内容（支持顶部搜索过滤）。"""
@@ -291,18 +425,14 @@ class AppUI:
                 ui.label('显示').classes('font-bold')
                 ui.label('列名').classes('font-bold')
 
-                all_cols = self.app_state.get("all_table_columns", [])
-                selected_cols = self.app_state.get("selected_table_columns", [])
+                all_cols = list(self.app_state.get("all_table_columns", []))
+                selected_cols = list(self.app_state.get("selected_table_columns", []))
                 search_term = (self.app_state.get("filter_search_term","") or "").strip().lower()
 
                 # 确保“所属页面”列在存在结果时始终可供选择
-                if self.app_state.get("current_search_results"):
-                    if 'page' not in all_cols:
-                        all_cols = ['page'] + [c for c in all_cols if c != 'page']
-                        self.app_state["all_table_columns"] = all_cols
-                    if 'page' not in selected_cols:
-                        selected_cols = ['page'] + [c for c in selected_cols if c != 'page']
-                        self.app_state["selected_table_columns"] = selected_cols
+                if self.app_state.get("current_search_results") and 'page' not in all_cols:
+                    all_cols = ['page'] + [c for c in all_cols if c != 'page']
+                    self.app_state["all_table_columns"] = all_cols
 
                 def get_label(column: str) -> str:
                     return '所属页面' if column == 'page' else column
@@ -322,6 +452,110 @@ class AppUI:
                         lambda e, k=key: self.on_filter_checkbox_change(bool(e.args[0]), k)
                     )
                     ui.label(label)
+
+    async def on_results_sort_changed(self, event):
+        """监听 Ag-Grid 排序变化并持久化排序模型。"""
+        path = self.app_state.get("current_graph_path")
+        query = self.app_state.get("current_query_raw")
+        if not path or not query:
+            return
+
+        sort_entries = []
+        raw_sort_model = None
+        try:
+            raw_sort_model = await self.results_table.run_grid_method('getSortModel')
+        except Exception:
+            raw_sort_model = None
+
+        if isinstance(raw_sort_model, list):
+            sort_entries = raw_sort_model
+        elif isinstance(raw_sort_model, dict):
+            result = raw_sort_model.get('result')
+            if isinstance(result, list):
+                sort_entries = result
+
+        if not sort_entries:
+            args = getattr(event, 'args', {}) or {}
+            maybe_sort_model = args.get('sortModel') or args.get('sort_model')
+            if isinstance(maybe_sort_model, list):
+                sort_entries = maybe_sort_model
+
+        sanitized: List[Dict[str, Any]] = []
+        for item in sort_entries or []:
+            if not isinstance(item, dict):
+                continue
+            col = item.get('colId') or item.get('field')
+            sort_dir = item.get('sort')
+            if not col or sort_dir not in ("asc", "desc"):
+                continue
+            sanitized.append({
+                "colId": str(col),
+                "sort": sort_dir,
+            })
+
+        for idx, entry in enumerate(sanitized):
+            entry["sortIndex"] = idx
+
+        self.app_state["current_sort_model"] = [dict(entry) for entry in sanitized]
+        try:
+            await run_in_executor(save_sort_for_query, path, query, sanitized)
+            self.status_log.push(f"排序记忆已更新（{len(sanitized)} 条）。")
+        except Exception as e:
+            self.status_log.push(f"排序记忆保存失败: {e}")
+
+    async def _apply_saved_sort_model(self):
+        """调用 Ag-Grid API 应用已记忆的排序模型。"""
+        model = [dict(entry) for entry in self.app_state.get("current_sort_model", [])]
+        if not model:
+            return
+        try:
+            self.results_table.run_grid_method('setSortModel', model)
+            self.status_log.push(f"已应用排序记忆（{len(model)} 条）。")
+        except Exception as e:
+            self.status_log.push(f"应用排序记忆失败: {e}")
+
+    async def _apply_saved_column_order(self):
+        """调用 Ag-Grid API 应用已记忆的列顺序。"""
+        # 列顺序已通过 update_table_columns 中的 columnDefs 体现，无需额外前端调用
+        return
+
+    async def on_grid_ready(self, event):
+        """Ag-Grid 表格就绪后尝试应用列顺序与排序模型。"""
+        await self._apply_saved_sort_model()
+
+    async def on_column_moved(self, event):
+        """监听列头拖动，保存当前显示列顺序。"""
+        if self.suppress_column_order_event:
+            return
+        path = self.app_state.get("current_graph_path")
+        query = self.app_state.get("current_query_raw")
+        if not path or not query:
+            return
+
+        ordered: List[str] = list(self.app_state.get("current_column_order", []))
+
+        try:
+            args = getattr(event, 'args', {}) or {}
+        except Exception:
+            args = {}
+        col_obj = args.get('column') or {}
+        moved_col = col_obj.get('colId') if isinstance(col_obj, dict) else None
+        to_index = args.get('toIndex') if isinstance(args.get('toIndex'), int) else None
+
+        if moved_col and moved_col in self.app_state.get("all_table_columns", []):
+            if moved_col in ordered:
+                ordered.remove(moved_col)
+            base_index = to_index
+            if base_index is None:
+                base_index = len(ordered)
+            base_index = max(0, min(len(ordered), base_index))
+            ordered.insert(base_index, moved_col)
+        else:
+            ordered = [c for c in self.app_state.get("selected_table_columns", []) if c not in ordered] + ordered
+
+        if not ordered:
+            return
+        await self._persist_column_order(ordered, "列顺序已保存。")
 
     async def on_build_cache_click(self, button: ui.button):
         async def build_cache_task():
@@ -344,13 +578,23 @@ class AppUI:
         async def clear_cache_task():
             success = await handle_clear_cache()
             if success:
-                # 同步清除所有列过滤偏好
+                # 同步清除所有列过滤偏好与排序记忆
                 try:
                     await run_in_executor(clear_filters)
                 except Exception as e:
                     self.status_log.push(f"清理列过滤偏好失败: {e}")
-                self.status_log.push("所有缓存与过滤偏好已成功清理。")
-                ui.notify('所有缓存与过滤偏好已成功清理。', color='positive', icon='done')
+                try:
+                    await run_in_executor(clear_sort_memory)
+                except Exception as e:
+                    self.status_log.push(f"清理排序记忆失败: {e}")
+                self.app_state["current_sort_model"] = []
+                try:
+                    self.results_table.run_grid_method('setSortModel', [])
+                except Exception:
+                    pass
+                self.update_table_columns()
+                self.status_log.push("所有缓存、过滤偏好与排序记忆已成功清理。")
+                ui.notify('所有缓存、过滤偏好与排序记忆已成功清理。', color='positive', icon='done')
             else:
                 self.status_log.push("清理缓存失败！请检查文件权限。")
                 ui.notify('清理缓存失败！请检查文件权限。', color='negative', icon='report_problem')
@@ -369,6 +613,32 @@ class AppUI:
                 self.status_log.push(f'清理过滤偏好失败: {e}')
                 ui.notify(f'清理过滤偏好失败: {e}', color='negative', icon='report_problem')
         await self.handle_long_operation(clear_filters_task(), button)
+
+    async def on_clear_sorts_click(self, button: ui.button):
+        async def clear_sorts_task():
+            path = self._get_current_graph_path()
+            target = path if (path and Path(path).is_dir()) else None
+            try:
+                if target:
+                    await run_in_executor(clear_sort_memory, target)
+                    msg = "已清除当前路径的高级属性查询排序与列顺序记忆。"
+                else:
+                    await run_in_executor(clear_sort_memory)
+                    msg = "已清除全部路径的高级属性查询排序与列顺序记忆。"
+                self.app_state["current_sort_model"] = []
+                self.app_state["saved_column_order"] = []
+                self.app_state["current_column_order"] = []
+                try:
+                    self.results_table.run_grid_method('setSortModel', [])
+                except Exception:
+                    pass
+                self.update_table_columns()
+                self.status_log.push(msg)
+                ui.notify(msg, color='warning', icon='sort')
+            except Exception as e:
+                self.status_log.push(f'清理排序记忆失败: {e}')
+                ui.notify(f'清理排序记忆失败: {e}', color='negative', icon='report_problem')
+        await self.handle_long_operation(clear_sorts_task(), button)
 
     async def on_analyze_click(self, button: ui.button):
         async def analyze_task():
@@ -614,6 +884,12 @@ window.addEventListener('resize', hideCopyMenu);
                                         'animateRows': True,
                                     }
                                     self.results_table = ui.aggrid(aggrid_options).classes('w-full copy-on-rightclick enable-text-select').props('flat bordered')
+                                    self.results_table.on('sortChanged', self.on_results_sort_changed)
+                                    self.results_table.on('sort-changed', self.on_results_sort_changed)
+                                    self.results_table.on('grid-ready', self.on_grid_ready)
+                                    self.results_table.on('gridReady', self.on_grid_ready)
+                                    self.results_table.on('columnMoved', self.on_column_moved)
+                                    self.results_table.on('column-moved', self.on_column_moved)
 
                             with ui.tab_panel(stats_tab).classes('h-full'):
                                 with ui.column().classes('w-full p-4 gap-2 h-full'):
@@ -634,6 +910,7 @@ window.addEventListener('resize', hideCopyMenu);
                                         with ui.row().classes('items-center gap-2'):
                                             self.build_cache_button = ui.button('只本路径库-建立/更新缓存', icon='save', on_click=lambda e: self.on_build_cache_click(e.sender)).props('unelevated')
                                             self.clear_filters_button = ui.button('只清理-高级属性查询-过滤', icon='filter_alt_off', on_click=lambda e: self.on_clear_filters_click(e.sender)).props('unelevated color=warning')
+                                            self.clear_sort_button = ui.button('只清理-高级属性查询-排序', icon='sort', on_click=lambda e: self.on_clear_sorts_click(e.sender)).props('unelevated color=warning')
                                             self.clear_cache_button = ui.button('清理所有缓存', icon='delete_sweep', on_click=lambda e: self.on_clear_cache_click(e.sender)).props('unelevated color=negative')
                 with self.splitter.after:
                     self.status_log = ui.log(max_lines=100).classes('w-full h-full text-sm copy-on-rightclick enable-text-select').style('user-select: text; white-space: pre-wrap; overflow-wrap: break-word;')
