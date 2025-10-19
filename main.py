@@ -9,7 +9,7 @@ def main():
     
     # 启动NiceGUI应用
     ui.run(
-        title="Logseq 属性查询工具",  # 设置窗口标题
+        title="Logseq 属性查询工具 v0.1",  # 设置窗口标题（含版本号）
         window_size=(1200, 800),   # 设置初始窗口大小
         native=True,               # 以独立的桌面应用模式运行
         reload=False               # 在最终版本中关闭自动重载
