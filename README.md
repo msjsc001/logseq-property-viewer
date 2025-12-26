@@ -13,7 +13,7 @@
 > **v2.1 新特性**：新增文件系统实时监听（零轮询）、增量更新、恢复出厂设置、全新配色方案等。
 
 <img alt="image" src="https://github.com/user-attachments/assets/7c60b81e-ee34-495a-af44-d74fe5620515" />
-<img width="1771" height="1163" alt="image" src="https://github.com/user-attachments/assets/21bfddf3-cadf-4ef4-bb7c-16cd93a8ffd3" />
+<img alt="image" src="https://github.com/user-attachments/assets/21bfddf3-cadf-4ef4-bb7c-16cd93a8ffd3" />
 
 
 ---
