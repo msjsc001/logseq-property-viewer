@@ -12,7 +12,8 @@ English | [简体中文](./README.md)
 
 > **v2.1 New Features**: Real-time file system monitoring (zero-polling), incremental updates, factory reset, new color scheme, and more.
 
-![screenshot](https://github.com/user-attachments/assets/44dd628b-0520-4afa-8367-154613091f37)
+<img alt="image" src="https://github.com/user-attachments/assets/7c60b81e-ee34-495a-af44-d74fe5620515" />
+<img alt="image" src="https://github.com/user-attachments/assets/21bfddf3-cadf-4ef4-bb7c-16cd93a8ffd3" />
 
 ---
 
