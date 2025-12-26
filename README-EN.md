@@ -1,5 +1,13 @@
 # Property Query - Logseq Property Query & Statistics Tool v2.1
 
+English | [简体中文](./README.md)
+
+<p align="center">
+  <a href="https://github.com/msjsc001/logseq-property-viewer/releases/latest"><img src="https://img.shields.io/github/v/release/msjsc001/logseq-property-viewer"></a>
+  <a href="https://github.com/msjsc001/logseq-property-viewer/commits/main"><img src="https://img.shields.io/github/last-commit/msjsc001/logseq-property-viewer"></a>
+  <a href="https://github.com/msjsc001/logseq-property-viewer/releases"><img src="https://img.shields.io/github/downloads/msjsc001/logseq-property-viewer/total?label=Downloads&color=brightgreen"></a>
+</p>
+
 **A high-performance standalone desktop tool for advanced property queries and data analysis of Markdown files in Logseq knowledge bases,** presented through a modern graphical user interface (GUI). It works with any Markdown files using the `key:: value` property format.
 
 > **v2.1 New Features**: Real-time file system monitoring (zero-polling), incremental updates, factory reset, new color scheme, and more.

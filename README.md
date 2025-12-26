@@ -1,5 +1,13 @@
 # Property Query - Logseq 属性查询与统计工具 v2.1
 
+[English](./README-EN.md) | 简体中文
+
+<p align="center">
+  <a href="https://github.com/msjsc001/logseq-property-viewer/releases/latest"><img src="https://img.shields.io/github/v/release/msjsc001/logseq-property-viewer"></a>
+  <a href="https://github.com/msjsc001/logseq-property-viewer/commits/main"><img src="https://img.shields.io/github/last-commit/msjsc001/logseq-property-viewer"></a>
+  <a href="https://github.com/msjsc001/logseq-property-viewer/releases"><img src="https://img.shields.io/github/downloads/msjsc001/logseq-property-viewer/total?label=Downloads&color=brightgreen"></a>
+</p>
+
 **这是一个独立于 Logseq 软件之外的高性能桌面工具，用于对 Logseq 知识库中的 Markdown 文件进行高级的属性查询和数据统计，** 并以现代化的图形用户界面（GUI）展示结果。它通用于所有使用 `key:: value` 格式属性的 Markdown 文件。
 
 > **v2.1 新特性**：新增文件系统实时监听（零轮询）、增量更新、恢复出厂设置、全新配色方案等。
