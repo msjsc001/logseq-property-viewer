@@ -212,3 +212,19 @@ def clear_sort_memory(graph_path: str = None) -> None:
         qsm = {}
     config["query_sort_memory"] = qsm
     save_config(config)
+
+
+# ---- 语言设置 ----
+
+def get_language() -> str:
+    """获取当前语言设置，默认中文"""
+    config = load_config()
+    return config.get("language", "zh")
+
+def set_language(lang: str) -> None:
+    """保存语言设置"""
+    if lang not in ["zh", "en"]:
+        lang = "zh"
+    config = load_config()
+    config["language"] = lang
+    save_config(config)

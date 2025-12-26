@@ -61,8 +61,13 @@ def get_all_blocks_from_cache(cache_data: Dict[str, Any]) -> List[Dict[str, Any]
     从缓存数据中提取并返回所有 block 的列表。
     """
     all_blocks = []
-    for file_info in cache_data.values():
-        all_blocks.extend(file_info.get("blocks", []))
+    for file_path, file_info in cache_data.items():
+        blocks = file_info.get("blocks", [])
+        # 为了后续能定位到文件，我们需要把文件名注入到 block 信息中
+        # 注意：这里会修改内存中的 dict 对象，但这对本次查询是有益的
+        for block in blocks:
+            block['file_path'] = file_path
+        all_blocks.extend(blocks)
     return all_blocks
 
 def clear_all_cache() -> bool:

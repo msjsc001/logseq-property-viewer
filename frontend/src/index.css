@@ -1,0 +1,215 @@
+/* 现代简洁设计 - 全局样式 */
+
+:root {
+  /* 主色调 - 靛蓝紫 */
+  --primary-color: #6366f1;
+  --primary-hover: #4f46e5;
+  --primary-light: #e0e7ff;
+
+  /* 中性色 */
+  --bg-primary: #f8fafc;
+  --bg-secondary: #ffffff;
+  --text-primary: #1e293b;
+  --text-secondary: #64748b;
+  --text-muted: #94a3b8;
+  --border-color: #e2e8f0;
+
+  /* 语义色 */
+  --success-color: #10b981;
+  --warning-color: #f59e0b;
+  --error-color: #ef4444;
+
+  /* 间距和圆角 */
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+
+  /* 阴影 */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+}
+
+/* 基本 Reset */
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  background-color: var(--bg-primary);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Antd 覆盖样式 */
+
+/* 侧边栏菜单 */
+.ant-menu-dark {
+  background: transparent !important;
+}
+
+.ant-menu-dark .ant-menu-item {
+  margin: 4px 8px !important;
+  border-radius: var(--radius-md) !important;
+  transition: all 0.2s ease !important;
+}
+
+.ant-menu-dark .ant-menu-item:hover {
+  background: rgba(255, 255, 255, 0.1) !important;
+}
+
+.ant-menu-dark .ant-menu-item-selected {
+  background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%) !important;
+  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.4) !important;
+}
+
+/* 侧边栏折叠按钮 */
+.ant-layout-sider-trigger {
+  background: rgba(255, 255, 255, 0.05) !important;
+  border-top: 1px solid rgba(255, 255, 255, 0.08) !important;
+  transition: background 0.2s !important;
+}
+
+.ant-layout-sider-trigger:hover {
+  background: rgba(255, 255, 255, 0.1) !important;
+}
+
+/* 按钮样式 */
+.ant-btn-primary {
+  background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%) !important;
+  border: none !important;
+  box-shadow: 0 2px 8px rgba(99, 102, 241, 0.3) !important;
+  transition: all 0.2s ease !important;
+}
+
+.ant-btn-primary:hover {
+  background: linear-gradient(135deg, #4f46e5 0%, #4338ca 100%) !important;
+  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.4) !important;
+  transform: translateY(-1px);
+}
+
+.ant-btn-default {
+  border-color: var(--border-color) !important;
+  transition: all 0.2s ease !important;
+}
+
+.ant-btn-default:hover {
+  border-color: var(--primary-color) !important;
+  color: var(--primary-color) !important;
+}
+
+/* 输入框 */
+.ant-input,
+.ant-select-selector,
+.ant-picker {
+  border-radius: var(--radius-md) !important;
+  border-color: var(--border-color) !important;
+  transition: all 0.2s ease !important;
+}
+
+.ant-input:focus,
+.ant-input-focused,
+.ant-select-focused .ant-select-selector,
+.ant-picker-focused {
+  border-color: var(--primary-color) !important;
+  box-shadow: 0 0 0 3px var(--primary-light) !important;
+}
+
+/* 卡片 */
+.ant-card {
+  border-radius: var(--radius-lg) !important;
+  border-color: var(--border-color) !important;
+  box-shadow: var(--shadow-sm) !important;
+}
+
+/* 表格 */
+.ant-table {
+  border-radius: var(--radius-md) !important;
+  overflow: hidden;
+}
+
+.ant-table-thead>tr>th {
+  background: var(--bg-primary) !important;
+  font-weight: 600 !important;
+  color: var(--text-primary) !important;
+  border-bottom: 2px solid var(--border-color) !important;
+}
+
+.ant-table-tbody>tr:hover>td {
+  background: #f1f5f9 !important;
+}
+
+/* Modal */
+.ant-modal-content {
+  border-radius: var(--radius-lg) !important;
+  overflow: hidden;
+}
+
+.ant-modal-header {
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0 !important;
+}
+
+/* 消息提示 */
+.ant-message-notice-content {
+  border-radius: var(--radius-md) !important;
+  box-shadow: var(--shadow-lg) !important;
+}
+
+/* 分页 */
+.ant-pagination-item {
+  border-radius: var(--radius-sm) !important;
+}
+
+.ant-pagination-item-active {
+  background: var(--primary-color) !important;
+  border-color: var(--primary-color) !important;
+}
+
+.ant-pagination-item-active a {
+  color: white !important;
+}
+
+/* 标题 */
+.ant-typography h4 {
+  color: var(--text-primary) !important;
+  font-weight: 600 !important;
+}
+
+/* Select 下拉 */
+.ant-select-dropdown {
+  border-radius: var(--radius-md) !important;
+  box-shadow: var(--shadow-lg) !important;
+}
+
+/* 工具提示 */
+.ant-tooltip-inner {
+  border-radius: var(--radius-sm) !important;
+}
+
+/* Checkbox */
+.ant-checkbox-checked .ant-checkbox-inner {
+  background-color: var(--primary-color) !important;
+  border-color: var(--primary-color) !important;
+}
+
+/* 滚动条美化 */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--bg-primary);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}

@@ -9,17 +9,56 @@ env/
 venv/
 .venv/
 
-# Build artifacts
+# Build artifacts (PyInstaller)
 /build/
 /dist/
+*.spec
+!PropertyQuery.spec
+
+# egg-info
 *.egg-info/
 
 # IDE configuration files
 .vscode/
 .idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
 
-# NiceGUI storage
+# OS files
+.DS_Store
+Thumbs.db
+
+# NiceGUI storage (legacy)
 .nicegui/
 
 # Project-specific cache
 .logseq_tui_cache/
+
+# User configuration (contains personal paths)
+.logseq_query_config.json
+
+# Node modules (frontend has its own .gitignore, but just in case)
+node_modules/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Local environment files
+*.local
+.env
+.env.*
+
+# Temporary files
+*.tmp
+*.temp
+
+# Test coverage
+.coverage
+htmlcov/
+
+# PyInstaller debug spec
+PropertyQuery_debug.spec
