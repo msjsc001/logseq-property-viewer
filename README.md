@@ -116,88 +116,96 @@ python run_app.py
 
 ---
 
-## 📦 构建 EXE 可执行文件
+## 🛠️ 开发者指南
 
-如需构建独立的 Windows 可执行文件：
-
-```bash
-# 安装构建工具
-pip install pyinstaller pillow
-
-# 构建 EXE（无终端窗口，带图标）
-pyinstaller PropertyQuery.spec --clean
-
-# 输出位置：dist/PropertyQuery.exe
-```
-
-**构建注意事项**：
-- 确保 `frontend/dist/` 目录存在（需先执行 `npm run build`）
-- 确保 `icon.ico` 图标文件存在
-- 构建产物约 17-18 MB
-- EXE 文件包含所有依赖，可独立运行
-
----
-
-## 🛠️ 开发指南
-
-### 项目结构
-
-```
-.
-├── run_app.py          # 🚀 应用主入口
-├── backend/
-│   ├── main.py         # 🔧 FastAPI 后端服务
-│   └── file_watcher.py # 👁️ 文件系统监听器（watchdog）
-├── frontend/           # 🎨 React 前端
-│   ├── src/
-│   │   ├── App.tsx     #    - 主应用组件
-│   │   ├── api.ts      #    - API 服务封装
-│   │   ├── i18n.tsx    #    - 国际化模块
-│   │   └── components/ #    - 页面组件
-│   │       ├── QueryPage.tsx    # 高级查询页
-│   │       ├── ChartsPage.tsx   # 数据统计页
-│   │       └── SettingsPage.tsx # 设置页
-│   └── dist/           #    - 生产构建输出
-├── core.py             # ⚙️ 核心解析逻辑
-├── cache.py            # ⚡ 智能缓存管理
-├── config.py           # 💾 用户配置管理
-├── PropertyQuery.spec  # 📦 PyInstaller 构建配置
-├── icon.ico            # 🎨 应用图标
-├── requirements.txt    # 📦 Python 依赖
-└── README.md           # 📄 项目说明
-```
-
-### 技术栈
-
+### 1. 技术栈
 - **后端**：FastAPI + Uvicorn + watchdog
-- **前端**：React + TypeScript + Ant Design + ECharts
-- **桌面窗口**：PyWebView
-- **核心功能**：Python 多线程并行解析
+- **前端**：React + TypeScript + Ant Design + ECharts + TailwindCSS
+- **桌面应用**：PyWebView (无内嵌 Chromium 包袱，轻量级)
+- **核心逻辑**：Python 多线程并行解析
+- **打包工具**：PyInstaller (后端EXE构建)、Vite (前端构建)
 
-### 开发模式
+### 2. 开发核心技术点
+- **Markdown 属性解析**：基于正则表达式与多线程机制，能够高效并精确扫描 Logseq 知识库中符合 `key:: value` 语法的属性块。
+- **智能增量缓存调度**：
+  - 首屏启动时，全量扫描并构建 `cache.json` 本地缓存进行性能预热。
+  - 基于 Watchdog 的操作系统底层事件监听（创建、修改、删除），实现对知识库的零轮询侦测和**增量缓存更新**，大幅节约 CPU 占用。
+  - 内置防抖机制（Debounce）优雅处理密集型文件变更。
+- **前后端解耦的架构设计**：
+  - 本地启动 FastAPI 提供一套完整的 RESTful API 网关。
+  - 使用 PyWebView 以现代无头浏览器承载基于 React 的单页应用（SPA）。
+  - 支持前后端独立按需开发和热渲染。
+
+### 3. 项目结构
+
+```text
+.
+├── run_app.py          # 🚀 应用主入口 (初始化 PyWebView 和 FastAPI)
+├── backend/
+│   ├── main.py         # 🔧 FastAPI 后端核心服务 (路由与控制器)
+│   └── file_watcher.py # 👁️ 文件系统监听器（watchdog 增量更新实现）
+├── frontend/           # 🎨 React 前端代码库
+│   ├── src/
+│   │   ├── App.tsx     #    - 主应用与路由组件
+│   │   ├── api.ts      #    - API 服务封装层
+│   │   ├── i18n.tsx    #    - 国际化支持模块
+│   │   └── components/ #    - 页面级业务组件 (查询、统计、设置等)
+│   └── dist/           #    - npm run build 构建输出目录
+├── core.py             # ⚙️ 核心数据解析与查询逻辑层
+├── cache.py            # ⚡ 智能缓存管理机制
+├── config.py           # 💾 本地用户配置与状态持久层
+├── PropertyQuery.spec  # 📦 PyInstaller 独立程序打包配置
+├── icon.ico            # 🎨 Windows 桌面应用图标
+├── requirements.txt    # 📦 Python 运行依赖清单
+└── README.md           # 📄 项目说明文档
+```
+
+### 4. 本地开发调试模式
+
+确保在系统内拥有 Python 3.8+ 及 Node.js 18+ 环境。
 
 ```bash
-# 后端开发（热重载）
+# 激活后端并以热重载模式运行
 cd backend
 uvicorn main:app --reload --port 8000
 
-# 前端开发（热重载）
+# 激活前端并进行实时浏览器调试
 cd frontend
 npm run dev
 ```
 
-### API 端点
+### 5. API 核心功能端点
 
-| 端点                 | 方法     | 说明         |
-| -------------------- | -------- | ------------ |
-| `/api/health`        | GET      | 健康检查     |
-| `/api/config`        | GET/POST | 配置管理     |
-| `/api/build-cache`   | POST     | 重建缓存     |
-| `/api/search`        | POST     | 属性查询     |
-| `/api/stats`         | GET      | 统计数据     |
-| `/api/check-updates` | GET      | 检查文件变动 |
-| `/api/apply-updates` | POST     | 应用增量更新 |
-| `/api/reset-all`     | POST     | 恢复出厂设置 |
+| 端点                 | 方法     | 核心功能说明                             |
+| -------------------- | -------- | ---------------------------------------- |
+| `/api/health`        | GET      | 探针检测应用后端存活状态                 |
+| `/api/config`        | GET/POST | 系统运行参数与用户个性化配置存取         |
+| `/api/build-cache`   | POST     | 销毁脏数据，触发知识库全景扫描           |
+| `/api/search`        | POST     | 高级查询引擎（执行：精确/模糊/存在匹配） |
+| `/api/stats`         | GET      | 全局维度下的分析统计模型下发             |
+| `/api/check-updates` | GET      | 获取通过 watchdog 所捕获的本地变更文件池 |
+| `/api/apply-updates` | POST     | 消费变更文件池，热更新当前内存缓存       |
+| `/api/reset-all`     | POST     | 摧毁全部落盘数据与状态，执行出厂重置     |
+
+### 6. 构建独立 EXE 可执行文件 (发布准备)
+
+项目支持通过 PyInstaller 构建免安装的纯净版 Windows 可执行程序，该形式内部已包含运行期所有依赖环境，运行不带黑色命令行终端。
+
+```bash
+# 1. 确保已在环境中安装打包依赖工具
+pip install pyinstaller pillow
+
+# 2. 编译前端生产级代码（至关重要！否则程序将因缺失 UI 而阻断运行）
+cd frontend
+npm install
+npm run build
+cd ..
+
+# 3. 发起产物重组构建
+pyinstaller PropertyQuery.spec --clean
+
+# 执行成功后，最终输出成果在 dist/PropertyQuery.exe，体积控制在 17-18 MB 左右
+```
 
 ---
 

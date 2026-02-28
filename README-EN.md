@@ -115,88 +115,96 @@ The application will automatically open a desktop window. Configure your Logseq 
 
 ---
 
-## 📦 Building EXE Executable
+## �️ Developer Guide
 
-To build a standalone Windows executable:
+### 1. Technology Stack
+- **Backend**: FastAPI + Uvicorn + watchdog
+- **Frontend**: React + TypeScript + Ant Design + ECharts + TailwindCSS
+- **Desktop Window**: PyWebView (High performance, lightweight without Chromium overhead)
+- **Core Logic**: Python multi-threaded parallel parsing
+- **Build Tools**: PyInstaller (Backend/EXE), Vite (Frontend)
 
-```bash
-# Install build tools
-pip install pyinstaller pillow
+### 2. Core Development Technologies
+- **Markdown AST Parsing**: Uses multithreaded regular expressions to efficiently and accurately scan `key:: value` property blocks across the Logseq knowledge base.
+- **Smart Incremental Cache Strategy**:
+  - Full scan on initial setup to build the `cache.json` local cache for warming up performance.
+  - Integration with **Watchdog** for OS-level event listening (Create, Modify, Delete) to achieve zero-polling directory monitoring and real-time **incremental cache updates**, drastically reducing CPU usage.
+  - Built-in debounce mechanism to elegantly handle aggressive burst file changes.
+- **Decoupled Architecture**:
+  - Locally spawned FastAPI instance operates as a complete RESTful API gateway.
+  - PyWebView utilizes a modern headless browser to containerize the React-built Single Page Application (SPA).
+  - Designed for independent frontend/backend hot-reload development.
 
-# Build EXE (no console window, with icon)
-pyinstaller PropertyQuery.spec --clean
+### 3. Project Structure
 
-# Output location: dist/PropertyQuery.exe
-```
-
-**Build Notes**:
-- Ensure `frontend/dist/` directory exists (run `npm run build` first)
-- Ensure `icon.ico` icon file exists
-- Build output is approximately 17-18 MB
-- EXE includes all dependencies and runs standalone
-
----
-
-## 🛠️ Developer Guide
-
-### Project Structure
-
-```
+```text
 .
-├── run_app.py          # 🚀 Application entry point
+├── run_app.py          # 🚀 Application entry point (Init PyWebView & FastAPI)
 ├── backend/
-│   ├── main.py         # 🔧 FastAPI backend service
-│   └── file_watcher.py # 👁️ File system watcher (watchdog)
-├── frontend/           # 🎨 React frontend
+│   ├── main.py         # 🔧 FastAPI core backend service (Routes & Controllers)
+│   └── file_watcher.py # 👁️ File system watcher (Watchdog incremental sync)
+├── frontend/           # 🎨 React frontend workspace
 │   ├── src/
-│   │   ├── App.tsx     #    - Main app component
-│   │   ├── api.ts      #    - API service wrapper
-│   │   ├── i18n.tsx    #    - Internationalization module
-│   │   └── components/ #    - Page components
-│   │       ├── QueryPage.tsx    # Advanced query page
-│   │       ├── ChartsPage.tsx   # Statistics page
-│   │       └── SettingsPage.tsx # Settings page
-│   └── dist/           #    - Production build output
-├── core.py             # ⚙️ Core parsing logic
-├── cache.py            # ⚡ Smart cache management
-├── config.py           # 💾 User configuration
-├── PropertyQuery.spec  # 📦 PyInstaller build config
-├── icon.ico            # 🎨 Application icon
-├── requirements.txt    # 📦 Python dependencies
+│   │   ├── App.tsx     #    - Main application & routing component
+│   │   ├── api.ts      #    - API service wrapper layer
+│   │   ├── i18n.tsx    #    - Internationalization support module
+│   │   └── components/ #    - Page-level components (Query, Stats, Settings)
+│   └── dist/           #    - Production build output from `npm run build`
+├── core.py             # ⚙️ Core querying and data parsing logic layer
+├── cache.py            # ⚡ Smart cache management mechanism
+├── config.py           # 💾 Local user configuration & persistence layer
+├── PropertyQuery.spec  # 📦 PyInstaller build configuration
+├── icon.ico            # 🎨 Windows executable application icon
+├── requirements.txt    # 📦 Python runtime dependency list
 └── README.md           # 📄 Project documentation
 ```
 
-### Tech Stack
+### 4. Local Development Mode
 
-- **Backend**: FastAPI + Uvicorn + watchdog
-- **Frontend**: React + TypeScript + Ant Design + ECharts
-- **Desktop Window**: PyWebView
-- **Core Features**: Python multi-threaded parallel parsing
-
-### Development Mode
+Ensure you have Python 3.8+ and Node.js 18+ installed on your system.
 
 ```bash
-# Backend development (hot reload)
+# Start backend in hot-reload mode
 cd backend
 uvicorn main:app --reload --port 8000
 
-# Frontend development (hot reload)
+# Start frontend for browser testing
 cd frontend
 npm run dev
 ```
 
-### API Endpoints
+### 5. Core API Endpoints
 
-| Endpoint             | Method   | Description               |
-| -------------------- | -------- | ------------------------- |
-| `/api/health`        | GET      | Health check              |
-| `/api/config`        | GET/POST | Configuration management  |
-| `/api/build-cache`   | POST     | Rebuild cache             |
-| `/api/search`        | POST     | Property query            |
-| `/api/stats`         | GET      | Statistics data           |
-| `/api/check-updates` | GET      | Check file changes        |
-| `/api/apply-updates` | POST     | Apply incremental updates |
-| `/api/reset-all`     | POST     | Factory reset             |
+| Endpoint             | Method   | Core Functionality                                              |
+| -------------------- | -------- | --------------------------------------------------------------- |
+| `/api/health`        | GET      | Health check for backend liveness probe                         |
+| `/api/config`        | GET/POST | Fetch/Update user config and system parameters                  |
+| `/api/build-cache`   | POST     | Trigger a full knowledge base scan and cache rebuild            |
+| `/api/search`        | POST     | Advanced query engine (Exact/Fuzzy/Existence match)             |
+| `/api/stats`         | GET      | Fetch properties distribution data for charts                   |
+| `/api/check-updates` | GET      | Consume the pool of changed files captured by watchdog          |
+| `/api/apply-updates` | POST     | Process file changes and hot-update in-memory cache             |
+| `/api/reset-all`     | POST     | Wipe all persisted data, configurations & cache (Factory reset) |
+
+### 6. Building Standalone EXE (Release Prep)
+
+The project supports building a portable, standalone Windows executable using PyInstaller. It bundles all necessary runtime dependencies without launching a separate command-line terminal window.
+
+```bash
+# 1. Install build dependencies
+pip install pyinstaller pillow
+
+# 2. Build frontend production assets (CRITICAL! The EXE will fail to run without the UI)
+cd frontend
+npm install
+npm run build
+cd ..
+
+# 3. Initiate application compile & build
+pyinstaller PropertyQuery.spec --clean
+
+# The final executable will be generated at dist/PropertyQuery.exe (approx. 17-18 MB)
+```
 
 ---
 
