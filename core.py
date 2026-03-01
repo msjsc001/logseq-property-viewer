@@ -107,3 +107,10 @@ def scan_and_parse_graph(graph_path: str) -> Dict[str, Any]:
                 print(f"[Core Error] Failed to process {md_file}: {e}")
     
     return cache_data
+
+def parse_file_for_properties(file_path: str) -> List[Dict[str, Any]]:
+    """
+    供外部调用的解析单个文件属性的高层次包装函数。
+    主要用于增量更新时解析变动的文件。
+    """
+    return _process_single_file(Path(file_path))

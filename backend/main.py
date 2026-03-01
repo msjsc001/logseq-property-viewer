@@ -71,7 +71,7 @@ def _perform_search_on_cache(all_blocks: List[Dict], query: str) -> List[Dict]:
     return results
 
 # --- FastAPI App ---
-app = FastAPI(title="Logseq Query API", version="2.0.0")
+app = FastAPI(title="Logseq Query API", version="2.2.0")
 
 # 配置 CORS
 app.add_middleware(
@@ -95,7 +95,7 @@ class SearchRequest(BaseModel):
 
 @app.get("/api/health")
 async def health_check():
-    return {"status": "ok", "version": "2.0.0"}
+    return {"status": "ok", "version": "2.2.0"}
 
 @app.get("/api/config")
 async def get_config():
@@ -261,12 +261,17 @@ async def get_preferences():
     """获取用户偏好（查询历史、全局隐藏列等）"""
     try:
         cfg = await run_in_executor(config.load_config)
+        graph_path = cfg.get("graph_path", "")
+        # 如果获取不到 graph_path 默认返回 main
+        graph_name = os.path.basename(graph_path.strip(os.sep)) if graph_path else "main"
+        
         return {
             "query_history": cfg.get("query_history", []),
             "global_hidden_columns": cfg.get("global_hidden_columns", []),
             "column_configs": cfg.get("column_configs", {}),
             "sidebar_collapsed": cfg.get("sidebar_collapsed", False),
-            "auto_update_enabled": cfg.get("auto_update_enabled", False)
+            "auto_update_enabled": cfg.get("auto_update_enabled", False),
+            "graph_name": graph_name
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -353,23 +358,20 @@ async def search(req: SearchRequest):
                     'page': item.get('page', ''), 
                     'content': item.get('content', '')
                 }
-                # 提取属性
+                # 提取属性，防止覆盖内置保留字段
                 properties = item.get('properties', {})
                 if properties:
-                    flat_item.update(properties)
+                    reserved_keys = {'id', 'page', 'content', '_missing', 'key'}
+                    for k, v in properties.items():
+                        if k in reserved_keys:
+                            flat_item[f"prop_{k}"] = v
+                        else:
+                            flat_item[k] = v
                 
-                # 检查文件是否存在
-                file_path = item.get('properties', {}).get('file_path') # 注意 properties 结构
-                # item 结构通常是 {'page':..., 'content':..., 'properties': {...}, 'file_path': ...}
-                # 根据之前 query_page.py 的逻辑:
-                # flat_item = {'id': i, 'page': item.get('page', ''), 'content': item.get('content', '')}
-                # properties = item.get('properties', {})
-                # flat_item.update(properties)
-                
-                # 补充: query_page.py line 140 check_files logic uses item.get('file_path')
-                # 但 cache 结构里 file_path 在哪里？
-                # logic_adapter._perform_search_on_cache 返回的是 block list
-                # cache.py get_all_blocks_from_cache returns list of blocks
+                # 传递 file_path 以便前端后续扩展使用
+                file_path = item.get('file_path')
+                if file_path:
+                    flat_item['file_path'] = file_path
                 
                 flat_results.append(flat_item)
                 

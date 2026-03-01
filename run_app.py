@@ -85,7 +85,7 @@ def main():
     is_frozen = getattr(sys, 'frozen', False)
     
     if not is_frozen:
-        print("正在启动 Property Query 2.1 (开发模式)...")
+        print("正在启动 Property Query 2.2.0 (开发模式)...")
     
     backend_proc = None
     backend_thread = None
@@ -112,10 +112,8 @@ def main():
             print(">> Services Ready! Launching Window...")
         
         # 获取用户数据目录用于持久化 localStorage
-        if sys.platform == 'win32':
-            storage_path = os.path.join(os.environ.get('APPDATA', ''), 'PropertyQuery')
-        else:
-            storage_path = os.path.expanduser('~/.property_query')
+        from config import get_app_data_dir
+        storage_path = str(get_app_data_dir())
         
         # 确保目录存在
         os.makedirs(storage_path, exist_ok=True)
@@ -130,7 +128,7 @@ def main():
         
         # 创建并启动独立窗口（带图标）
         window = webview.create_window(
-            'Property Query 2.1',
+            'Property Query 2.2.0',
             'http://127.0.0.1:8000',
             width=1200,
             height=800,

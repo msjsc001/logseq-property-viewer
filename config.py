@@ -1,10 +1,29 @@
-# -*- coding: utf-8 -*-
 import json
 from pathlib import Path
 from typing import Dict, Any, List
 import datetime
+import sys
+import os
 
-CONFIG_FILE = Path.home() / ".logseq_query_config.json"
+def get_app_data_dir() -> Path:
+    """获取程序独立的用户数据存储目录"""
+    if sys.platform == 'win32':
+        base = Path(os.environ.get('APPDATA', '')) / 'PropertyQuery'
+    else:
+        base = Path.home() / '.property_query'
+    base.mkdir(parents=True, exist_ok=True)
+    return base
+
+CONFIG_FILE = get_app_data_dir() / "config.json"
+
+# 自动迁移旧配置文件
+_OLD_CONFIG_FILE = Path.home() / ".logseq_query_config.json"
+if _OLD_CONFIG_FILE.exists() and not CONFIG_FILE.exists():
+    try:
+        import shutil
+        shutil.move(str(_OLD_CONFIG_FILE), str(CONFIG_FILE))
+    except Exception:
+        pass
 
 def load_config() -> Dict[str, Any]:
     """

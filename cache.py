@@ -4,14 +4,15 @@ import json
 import shutil
 from pathlib import Path
 from typing import Dict, Any, List
+from config import get_app_data_dir
 
 # --- 常量定义 ---
-CACHE_DIR_NAME = ".logseq_tui_cache"
+CACHE_DIR_NAME = "cache"
 
 def get_cache_dir() -> Path:
-    """获取并确保缓存目录存在。"""
-    cache_dir = Path.cwd() / CACHE_DIR_NAME
-    cache_dir.mkdir(exist_ok=True)
+    """获取并确保独立用户数据目录下的缓存目录存在。"""
+    cache_dir = get_app_data_dir() / CACHE_DIR_NAME
+    cache_dir.mkdir(parents=True, exist_ok=True)
     return cache_dir
 
 def _get_cache_filepath_for_graph(graph_path: str) -> Path:

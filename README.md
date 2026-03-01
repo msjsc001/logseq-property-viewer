@@ -1,4 +1,4 @@
-# Property Query - Logseq 属性查询与统计工具 v2.1
+# Property Query - Logseq 属性查询与统计工具 v2.2.0
 
 [English](./README-EN.md) | 简体中文
 
@@ -10,7 +10,7 @@
 
 **这是一个独立于 Logseq 软件之外的高性能桌面工具，用于对 Logseq 知识库中的 Markdown 文件进行高级的属性查询和数据统计，** 并以现代化的图形用户界面（GUI）展示结果。它通用于所有使用 `key:: value` 格式属性的 Markdown 文件。
 
-> **v2.1 新特性**：新增文件系统实时监听（零轮询）、增量更新、恢复出厂设置、全新配色方案等。
+> **v2.2.0 新特性**：核心数据纯净隔离（支持持久存储至 APPDATA）、属性键防冲突重命名、Logseq 外部唤醒动态 URI、底层组件防宕机稳健修复等。
 
 <img alt="image" src="https://github.com/user-attachments/assets/7c60b81e-ee34-495a-af44-d74fe5620515" />
 <img alt="image" src="https://github.com/user-attachments/assets/21bfddf3-cadf-4ef4-bb7c-16cd93a8ffd3" />
@@ -211,37 +211,7 @@ pyinstaller PropertyQuery.spec --clean
 
 ## 📝 更新日志
 
-### v2.1 (2024-12)
-- **文件系统监听**：使用 watchdog 实现零轮询的实时监听
-- **增量更新**：仅处理变动文件，无需全量重建
-- **恢复出厂设置**：一键清除所有数据和配置，带3秒确认
-- **全新配色**：靛蓝紫主色调，现代简洁设计
-- **侧边栏记忆**：折叠状态自动保存
-- **数据统计刷新**：添加手动刷新按钮
-- **配置持久化**：查询历史、列配置等存储到后端配置文件
-- **EXE 构建支持**：添加 PyInstaller 构建配置和自定义图标
-
-### v2.0 (2024-12)
-- **架构重构**：从 NiceGUI 迁移至 FastAPI + React 架构
-- **全新 UI**：采用 Ant Design 组件库，界面更加现代美观
-- **列头拖拽**：支持拖拽 ⋮⋮ 图标调整列顺序
-- **列宽调整**：支持拖拽列边框调整宽度
-- **百分比统计**：属性键和值分布新增占比列
-- **多语言支持**：支持中文/英文切换
-- **导出增强**：支持 JSON 和 CSV 格式导出
-- **历史记录**：查询历史持久化保存
-
-### v0.3
-- **架构升级**：UI 模块拆分为 `ui_components` 组件包
-
-### v0.2
-- 修复"所属页面"列显示问题
-- 右键复制弹窗功能
-
-### v0.1
-- 初始版本发布
-- 标题栏显示版本号
-- 高级属性查询列选择支持全局记忆
+[👉 点击查看完整更新日志 / Click here for full changelog](./CHANGELOG.md)
 
 ---
 

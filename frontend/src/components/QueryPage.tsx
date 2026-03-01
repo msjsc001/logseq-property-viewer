@@ -114,6 +114,7 @@ const QueryPage: React.FC = () => {
     const [queryHistory, setQueryHistory] = useState<string[]>([]);
     const [lastQuery, setLastQuery] = useState<string>('');
     const [globalHiddenCols, setGlobalHiddenCols] = useState<string[]>([]);
+    const [graphName, setGraphName] = useState<string>('main');
 
     // 导出对话框
     const [exportModalOpen, setExportModalOpen] = useState<boolean>(false);
@@ -140,6 +141,9 @@ const QueryPage: React.FC = () => {
                 }
                 if (prefs.column_configs) {
                     columnConfigsRef.current = prefs.column_configs;
+                }
+                if (prefs.graph_name) {
+                    setGraphName(prefs.graph_name);
                 }
             } catch (e) {
                 console.error('Failed to load preferences:', e);
@@ -272,9 +276,9 @@ const QueryPage: React.FC = () => {
     };
 
     const handlePageClick = (pageName: string) => {
-        const url = `logseq://graph/main?page=${encodeURIComponent(pageName)}`;
+        const url = `logseq://graph/${encodeURIComponent(graphName)}?page=${encodeURIComponent(pageName)}`;
         window.open(url, '_blank');
-        message.info(`正在打开 Logseq: ${pageName}`);
+        message.info(`正在打开 Logseq: ${pageName} (${graphName})`);
     };
 
     const handleCopy = (text: string) => {
