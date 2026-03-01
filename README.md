@@ -13,6 +13,7 @@
 > **v2.2.0 新特性**：核心数据纯净隔离（支持持久存储至 APPDATA）、属性键防冲突重命名、Logseq 外部唤醒动态 URI、底层组件防宕机稳健修复等。
 
 <img alt="image" src="https://github.com/user-attachments/assets/7c60b81e-ee34-495a-af44-d74fe5620515" />
+<img alt="image" src="https://github.com/user-attachments/assets/52d54357-f851-4205-be6c-214017d51d71" />
 <img alt="image" src="https://github.com/user-attachments/assets/21bfddf3-cadf-4ef4-bb7c-16cd93a8ffd3" />
 
 
