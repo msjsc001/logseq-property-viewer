@@ -13,6 +13,7 @@ English | [简体中文](./README.md)
 > **v2.2.0 New Features**: Data storage securely isolated to APPDATA directories, robust collision mapping defenses against reserved item keys, dynamically generated application external links, and resilient incremental parsing improvements.
 
 <img alt="image" src="https://github.com/user-attachments/assets/7c60b81e-ee34-495a-af44-d74fe5620515" />
+<img alt="image" src="https://github.com/user-attachments/assets/52d54357-f851-4205-be6c-214017d51d71" />
 <img alt="image" src="https://github.com/user-attachments/assets/21bfddf3-cadf-4ef4-bb7c-16cd93a8ffd3" />
 
 ---
