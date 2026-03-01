@@ -125,5 +125,11 @@ export const apiService = {
     applyUpdates: async () => {
         const res = await API.post('/apply-updates');
         return res.data;
+    },
+
+    // 打开用户数据目录
+    openDataDir: async () => {
+        const res = await API.post('/open-data-dir');
+        return res.data;
     }
 };

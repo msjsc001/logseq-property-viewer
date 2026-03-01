@@ -5,6 +5,7 @@
 - **Data Collision Defense**: Resolved a severe dictionary collision vulnerability where Logseq notes bearing properties like `id` or `page` overwrite internal system states.
 - **Dynamic URI Resolution**: Fixed an issue where the link referencing the Logseq graph was statically preset to `main` causing deep-link failure. The graph name is now dynamically extracted from the local source paths and shipped to frontend components.
 - **Incremental Cache Fix**: Resurrected the API parsing logic mapping that caused the incremental build and watchdog auto-update subsystem to fail.
+- **Data Directory Access**: Added a one-click button in the Settings page to open the OS-level application data directory for easy inspection.
 
 ## v2.1 (2024-12)
 - **File System Monitoring**: Zero-polling real-time monitoring with watchdog

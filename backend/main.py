@@ -254,6 +254,25 @@ async def apply_incremental_updates():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.post("/api/open-data-dir")
+async def open_data_dir():
+    """打开用户数据存储目录"""
+    import subprocess
+    import platform
+    from config import get_app_data_dir
+    
+    data_dir = str(get_app_data_dir())
+    try:
+        if platform.system() == "Windows":
+            os.startfile(data_dir)
+        elif platform.system() == "Darwin":
+            subprocess.Popen(["open", data_dir])
+        else:
+            subprocess.Popen(["xdg-open", data_dir])
+        return {"status": "success"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 # --- 用户偏好存储 API ---
 
 @app.get("/api/preferences")

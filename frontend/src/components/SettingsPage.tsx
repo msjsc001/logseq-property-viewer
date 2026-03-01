@@ -158,6 +158,15 @@ const SettingsPage: React.FC = () => {
         }
     };
 
+    const handleOpenDataDir = async () => {
+        try {
+            await apiService.openDataDir();
+            message.success('已打开数据目录');
+        } catch (err) {
+            message.error('打开数据目录失败');
+        }
+    };
+
     // 打开清除所有数据对话框
     const openResetModal = () => {
         setResetModalOpen(true);
@@ -277,6 +286,9 @@ const SettingsPage: React.FC = () => {
                     <Space wrap>
                         <Button icon={<ClearOutlined />} onClick={handleClearSortMemory}>
                             {t('settings.clearSortMemory')}
+                        </Button>
+                        <Button icon={<FolderOpenOutlined />} onClick={handleOpenDataDir}>
+                            打开数据存储目录
                         </Button>
                     </Space>
                 </Card>
