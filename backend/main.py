@@ -71,7 +71,7 @@ def _perform_search_on_cache(all_blocks: List[Dict], query: str) -> List[Dict]:
     return results
 
 # --- FastAPI App ---
-app = FastAPI(title="Logseq Query API", version="2.2.0")
+app = FastAPI(title="Logseq Query API", version="2.2.1")
 
 # 配置 CORS
 app.add_middleware(
@@ -95,7 +95,7 @@ class SearchRequest(BaseModel):
 
 @app.get("/api/health")
 async def health_check():
-    return {"status": "ok", "version": "2.2.0"}
+    return {"status": "ok", "version": "2.2.1"}
 
 @app.get("/api/config")
 async def get_config():

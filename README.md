@@ -1,4 +1,4 @@
-# Property Query - Logseq 属性查询与统计工具 v2.2.0
+# Property Query - Logseq 属性查询与统计工具 v2.2.1
 
 [English](./README-EN.md) | 简体中文
 
@@ -10,6 +10,7 @@
 
 **这是一个独立于 Logseq 软件之外的高性能桌面工具，用于对 Logseq 知识库中的 Markdown 文件进行高级的属性查询和数据统计，** 并以现代化的图形用户界面（GUI）展示结果。它通用于所有使用 `key:: value` 格式属性的 Markdown 文件。
 
+> **v2.2.1 紧急修复**：解决了自 2.2.0 引用的 PyWebview 4 默认开启隐私模式导致配置无法保存的“失忆”问题。
 > **v2.2.0 新特性**：核心数据纯净隔离（支持持久存储至 APPDATA）、属性键防冲突重命名、Logseq 外部唤醒动态 URI、底层组件防宕机稳健修复等。
 
 <img alt="image" src="https://github.com/user-attachments/assets/7c60b81e-ee34-495a-af44-d74fe5620515" />

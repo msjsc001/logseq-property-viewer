@@ -1,5 +1,8 @@
 # Changelog
 
+## v2.2.1 (2026-03)
+- **Fix**: Disabled PyWebview `private_mode` default, fixing the issue where application lost persistent `localStorage` and graph path settings upon restart.
+
 ## v2.2.0 (2026-03)
 - **Data Isolation**: Migrated all user-generated data, settings, and caching states to dedicated OS-level application data directories (e.g., `%APPDATA%\PropertyQuery` on Windows). Assured that the project directory is kept clean.
 - **Data Collision Defense**: Resolved a severe dictionary collision vulnerability where Logseq notes bearing properties like `id` or `page` overwrite internal system states.

@@ -85,7 +85,7 @@ def main():
     is_frozen = getattr(sys, 'frozen', False)
     
     if not is_frozen:
-        print("正在启动 Property Query 2.2.0 (开发模式)...")
+        print("正在启动 Property Query 2.2.1 (开发模式)...")
     
     backend_proc = None
     backend_thread = None
@@ -128,7 +128,7 @@ def main():
         
         # 创建并启动独立窗口（带图标）
         window = webview.create_window(
-            'Property Query 2.2.0',
+            'Property Query 2.2.1',
             'http://127.0.0.1:8000',
             width=1200,
             height=800,
@@ -136,7 +136,10 @@ def main():
         )
         
         # 使用指定的存储路径和图标启动
-        start_params = {'storage_path': storage_path}
+        start_params = {
+            'storage_path': storage_path,
+            'private_mode': False  # 确保关闭隐私模式，允许持久化 localStorage 和数据
+        }
         if icon_path:
             start_params['icon'] = icon_path
         webview.start(**start_params)

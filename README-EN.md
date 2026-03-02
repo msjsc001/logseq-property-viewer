@@ -1,4 +1,4 @@
-# Property Query - Logseq Property Query & Statistics Tool v2.2.0
+# Property Query - Logseq Property Query & Statistics Tool v2.2.1
 
 English | [简体中文](./README.md)
 
@@ -10,6 +10,7 @@ English | [简体中文](./README.md)
 
 **A high-performance standalone desktop tool for advanced property queries and data analysis of Markdown files in Logseq knowledge bases,** presented through a modern graphical user interface (GUI). It works with any Markdown files using the `key:: value` property format.
 
+> **v2.2.1 Hotfix**: Resolved a persistent state loss issue driven by PyWebview 4's default privacy mode, ensuring language configs and graph path data retain properly across app resets.
 > **v2.2.0 New Features**: Data storage securely isolated to APPDATA directories, robust collision mapping defenses against reserved item keys, dynamically generated application external links, and resilient incremental parsing improvements.
 
 <img alt="image" src="https://github.com/user-attachments/assets/7c60b81e-ee34-495a-af44-d74fe5620515" />

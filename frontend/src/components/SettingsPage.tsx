@@ -317,7 +317,7 @@ const SettingsPage: React.FC = () => {
                 </Card>
 
                 <Card title={`ℹ️ ${t('settings.aboutTitle')}`}>
-                    <Text>Property Query v2.1</Text>
+                    <Text>Property Query v2.2.1</Text>
                     <br />
                     <Text type="secondary">{t('settings.techStack')}</Text>
                     <Divider />
