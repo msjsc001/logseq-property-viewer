@@ -1,83 +1,101 @@
 # -*- coding: utf-8 -*-
+import datetime
 import hashlib
 import json
 import shutil
 from pathlib import Path
-from typing import Dict, Any, List
+from typing import Any, Dict, List
+
 from config import get_app_data_dir
 
-# --- 常量定义 ---
+
 CACHE_DIR_NAME = "cache"
+CACHE_SCHEMA_VERSION = 3
+
 
 def get_cache_dir() -> Path:
-    """获取并确保独立用户数据目录下的缓存目录存在。"""
     cache_dir = get_app_data_dir() / CACHE_DIR_NAME
     cache_dir.mkdir(parents=True, exist_ok=True)
     return cache_dir
 
+
 def _get_cache_filepath_for_graph(graph_path: str) -> Path:
-    """根据给定的 graph 路径生成一个唯一的、安全的缓存文件名。"""
-    # 使用路径的 SHA256 哈希值作为文件名，避免特殊字符问题
-    path_hash = hashlib.sha256(graph_path.encode('utf-8')).hexdigest()
+    path_hash = hashlib.sha256(graph_path.encode("utf-8")).hexdigest()
     return get_cache_dir() / f"{path_hash}.json"
 
+
+def build_cache_payload(graph_path: str, files: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "schema_version": CACHE_SCHEMA_VERSION,
+        "graph_path": graph_path,
+        "generated_at": datetime.datetime.now().isoformat(),
+        "files": files,
+    }
+
+
+def empty_cache_payload(graph_path: str) -> Dict[str, Any]:
+    return build_cache_payload(graph_path, {})
+
+
 def load_cache(graph_path: str) -> Dict[str, Any]:
-    """
-    加载指定 Logseq 库的缓存文件。
-
-    Args:
-        graph_path (str): Logseq 知识库的路径。
-
-    Returns:
-        Dict[str, Any]: 加载的缓存数据。如果缓存不存在或无效，则返回空字典。
-    """
     cache_file = _get_cache_filepath_for_graph(graph_path)
+    payload = empty_cache_payload(graph_path)
+    payload["_cache_exists"] = cache_file.exists()
+    payload["_stale"] = False
+
     if not cache_file.exists():
-        return {}
+        return payload
+
     try:
-        with open(cache_file, 'r', encoding='utf-8') as f:
-            return json.load(f)
-    except (json.JSONDecodeError, IOError):
-        # 如果文件损坏或无法读取，当作没有缓存处理
-        return {}
+        with open(cache_file, "r", encoding="utf-8") as file:
+            loaded = json.load(file)
+    except (json.JSONDecodeError, OSError):
+        payload["_stale"] = True
+        return payload
+
+    if (
+        not isinstance(loaded, dict)
+        or loaded.get("schema_version") != CACHE_SCHEMA_VERSION
+        or not isinstance(loaded.get("files"), dict)
+    ):
+        payload["_stale"] = True
+        return payload
+
+    loaded["_cache_exists"] = True
+    loaded["_stale"] = False
+    return loaded
+
 
 def save_cache(graph_path: str, cache_data: Dict[str, Any]) -> None:
-    """
-    将缓存数据保存到文件。
-
-    Args:
-        graph_path (str): Logseq 知识库的路径。
-        cache_data (Dict[str, Any]): 要保存的缓存数据。
-    """
     cache_file = _get_cache_filepath_for_graph(graph_path)
-    try:
-        with open(cache_file, 'w', encoding='utf-8') as f:
-            json.dump(cache_data, f, ensure_ascii=False, indent=4)
-    except IOError:
-        # 在这里可以添加日志记录，通知用户缓存保存失败
-        pass
+    payload = build_cache_payload(graph_path, cache_data.get("files", cache_data))
+    with open(cache_file, "w", encoding="utf-8") as file:
+        json.dump(payload, file, ensure_ascii=False, indent=2)
+
 
 def get_all_blocks_from_cache(cache_data: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """
-    从缓存数据中提取并返回所有 block 的列表。
-    """
-    all_blocks = []
-    for file_path, file_info in cache_data.items():
+    all_blocks: List[Dict[str, Any]] = []
+    for file_path, file_info in cache_data.get("files", {}).items():
         blocks = file_info.get("blocks", [])
-        # 为了后续能定位到文件，我们需要把文件名注入到 block 信息中
-        # 注意：这里会修改内存中的 dict 对象，但这对本次查询是有益的
         for block in blocks:
-            block['file_path'] = file_path
-        all_blocks.extend(blocks)
+            item = dict(block)
+            item["file_path"] = file_path
+            all_blocks.append(item)
     return all_blocks
 
-def clear_all_cache() -> bool:
-    """
-    删除整个缓存目录。
 
-    Returns:
-        bool: 如果成功删除目录则返回 True，否则返回 False。
-    """
+def clear_graph_cache(graph_path: str) -> bool:
+    cache_file = _get_cache_filepath_for_graph(graph_path)
+    if cache_file.exists():
+        try:
+            cache_file.unlink()
+            return True
+        except OSError:
+            return False
+    return True
+
+
+def clear_all_cache() -> bool:
     cache_dir = get_cache_dir()
     if cache_dir.exists():
         try:
@@ -85,4 +103,4 @@ def clear_all_cache() -> bool:
             return True
         except OSError:
             return False
-    return True # 目录不存在，也算成功
+    return True

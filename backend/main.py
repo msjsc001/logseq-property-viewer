@@ -1,79 +1,268 @@
 # -*- coding: utf-8 -*-
-import sys
-import os
 import asyncio
-import re
-from pathlib import Path
-from typing import List, Optional, Dict, Any, Callable
+import os
+import shutil
+import subprocess
+import sys
+from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor
+from functools import partial
+from pathlib import Path
+from typing import Any, Callable, Dict, Optional
 
-from fastapi import FastAPI, HTTPException, Body
+from fastapi import Body, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-# 将根目录添加到 sys.path 以便引用原有模块
 ROOT_DIR = Path(__file__).parent.parent
 sys.path.append(str(ROOT_DIR))
 
-# 导入核心模块
-import config
 import cache
+import config
 import core
+from app_constants import APP_IDENTIFIER, APP_NAME, APP_VERSION
+from app_logging import get_logger
+from backend.file_watcher import file_watcher
+from backend.query_engine import QuerySyntaxError, search_blocks
 
-# --- 内联的核心函数 (原 logic_adapter) ---
+
+logger = get_logger("property_query.api")
 _executor = ThreadPoolExecutor(max_workers=4)
 
-async def run_in_executor(func: Callable, *args):
-    """在线程池中运行同步函数"""
-    loop = asyncio.get_event_loop()
+
+async def run_in_executor(func: Callable, *args, **kwargs):
+    loop = asyncio.get_running_loop()
+    if kwargs:
+        return await loop.run_in_executor(_executor, partial(func, *args, **kwargs))
     return await loop.run_in_executor(_executor, func, *args)
 
-async def handle_build_cache(graph_path: str, progress_callback: Callable[[str], None] = None) -> int:
-    """重建缓存"""
-    def _build():
-        if progress_callback:
-            progress_callback(f"Scanning {graph_path}...")
-        cache_data = core.scan_and_parse_graph(graph_path)
-        cache.save_cache(graph_path, cache_data)
-        return len(cache_data)
-    return await run_in_executor(_build)
 
-def _perform_search_on_cache(all_blocks: List[Dict], query: str) -> List[Dict]:
-    """执行搜索 (同步)"""
-    query = query.strip()
-    if not query:
-        return []
-    
-    results = []
-    # 解析查询条件
-    if query.startswith("has:"):
-        key = query[4:].strip()
-        for block in all_blocks:
-            props = block.get("properties", {})
-            if key in props:
-                results.append(block)
-    elif ":" in query:
-        parts = query.split(":", 1)
-        key = parts[0].strip()
-        value = parts[1].strip() if len(parts) > 1 else ""
-        for block in all_blocks:
-            props = block.get("properties", {})
-            if key in props and value.lower() in str(props[key]).lower():
-                results.append(block)
+def _rebuild_cache_sync(graph_path: str) -> Dict[str, Any]:
+    files = core.scan_and_parse_graph(graph_path)
+    payload = cache.build_cache_payload(graph_path, files)
+    cache.save_cache(graph_path, payload)
+    return {
+        "payload": payload,
+        "file_count": len(files),
+        "indexed_file_count": sum(1 for item in files.values() if item.get("blocks")),
+        "block_count": sum(len(item.get("blocks", [])) for item in files.values()),
+    }
+
+
+async def ensure_cache_ready(graph_path: str) -> Dict[str, Any]:
+    payload = await run_in_executor(cache.load_cache, graph_path)
+    if payload.get("_stale") or not payload.get("_cache_exists"):
+        logger.info("Cache miss or stale cache detected for %s. Rebuilding...", graph_path)
+        result = await run_in_executor(_rebuild_cache_sync, graph_path)
+        return result["payload"]
+    return payload
+
+
+def _validate_graph_path(graph_path: str) -> str:
+    if not graph_path or not Path(graph_path).is_dir():
+        raise HTTPException(status_code=400, detail="Graph path not configured or invalid")
+    return graph_path
+
+
+def _open_directory(path: Path) -> None:
+    if sys.platform == "win32":
+        os.startfile(str(path))
+    elif sys.platform == "darwin":
+        subprocess.Popen(["open", str(path)])
     else:
-        # 全文搜索
-        for block in all_blocks:
-            props = block.get("properties", {})
-            for k, v in props.items():
-                if query.lower() in str(k).lower() or query.lower() in str(v).lower():
-                    results.append(block)
-                    break
-    return results
+        subprocess.Popen(["xdg-open", str(path)])
 
-# --- FastAPI App ---
-app = FastAPI(title="Logseq Query API", version="2.2.1")
 
-# 配置 CORS
+def _clear_logs() -> None:
+    log_dir = config.get_log_dir()
+    if log_dir.exists():
+        shutil.rmtree(log_dir)
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+
+def _normalize_key(value: str) -> str:
+    return value.casefold().replace("-", "").replace("_", "").replace(" ", "")
+
+
+def _normalize_property_value(value: Any) -> str:
+    if value is None:
+        return ""
+    return str(value)
+
+
+def _collect_property_aggregates(all_blocks: list[dict]) -> Dict[str, Any]:
+    key_counter: Counter[str] = Counter()
+    key_unique_values: Dict[str, set[str]] = defaultdict(set)
+    key_values: Dict[str, Counter[str]] = defaultdict(Counter)
+    value_counter: Counter[str] = Counter()
+    value_keys: Dict[str, Counter[str]] = defaultdict(Counter)
+    case_groups: Dict[str, set[str]] = defaultdict(set)
+    synonym_groups: Dict[str, set[str]] = defaultdict(set)
+    empty_values: Counter[str] = Counter()
+
+    for block in all_blocks:
+        for key, value in block.get("properties", {}).items():
+            string_value = _normalize_property_value(value)
+            key_counter[key] += 1
+            key_unique_values[key].add(string_value)
+            key_values[key][string_value] += 1
+            value_counter[string_value] += 1
+            value_keys[string_value][key] += 1
+            case_groups[key.casefold()].add(key)
+            synonym_groups[_normalize_key(key)].add(key)
+            if not string_value.strip():
+                empty_values[key] += 1
+
+    return {
+        "key_counter": key_counter,
+        "key_unique_values": key_unique_values,
+        "key_values": key_values,
+        "value_counter": value_counter,
+        "value_keys": value_keys,
+        "case_groups": case_groups,
+        "synonym_groups": synonym_groups,
+        "empty_values": empty_values,
+    }
+
+
+def _build_key_stats(aggregates: Dict[str, Any]) -> list[dict]:
+    key_counter: Counter[str] = aggregates["key_counter"]
+    key_unique_values: Dict[str, set[str]] = aggregates["key_unique_values"]
+    return [
+        {
+            "key": key,
+            "count": count,
+            "uniqueValues": len(key_unique_values.get(key, set())),
+        }
+        for key, count in key_counter.most_common()
+    ]
+
+
+def _build_key_value_distribution(aggregates: Dict[str, Any], key: str) -> Dict[str, Any]:
+    key_values: Dict[str, Counter[str]] = aggregates["key_values"]
+    values = [
+        {"value": value, "count": count}
+        for value, count in key_values.get(key, Counter()).most_common()
+    ]
+    return {"values": values, "total": len(values)}
+
+
+def _build_global_value_stats(aggregates: Dict[str, Any]) -> Dict[str, Any]:
+    value_counter: Counter[str] = aggregates["value_counter"]
+    value_keys: Dict[str, Counter[str]] = aggregates["value_keys"]
+    values = []
+    for value, count in value_counter.most_common():
+        key_counts = value_keys.get(value, Counter())
+        values.append(
+            {
+                "value": value,
+                "count": count,
+                "keyCount": len(key_counts),
+                "topKeys": [
+                    {"key": key, "count": key_count}
+                    for key, key_count in key_counts.most_common(3)
+                ],
+            }
+        )
+    return {"values": values, "total": len(values)}
+
+
+def _build_value_key_distribution(aggregates: Dict[str, Any], value: str) -> Dict[str, Any]:
+    value_keys: Dict[str, Counter[str]] = aggregates["value_keys"]
+    keys = [
+        {"key": key, "count": count}
+        for key, count in value_keys.get(value, Counter()).most_common()
+    ]
+    return {"value": value, "keys": keys, "total": len(keys)}
+
+
+def _build_diagnostics(aggregates: Dict[str, Any]) -> Dict[str, Any]:
+    key_counter: Counter[str] = aggregates["key_counter"]
+    key_unique_values: Dict[str, set[str]] = aggregates["key_unique_values"]
+    case_groups: Dict[str, set[str]] = aggregates["case_groups"]
+    synonym_groups: Dict[str, set[str]] = aggregates["synonym_groups"]
+    empty_values: Counter[str] = aggregates["empty_values"]
+
+    case_conflicts = [
+        {
+            "normalizedKey": normalized,
+            "variants": sorted(variants),
+            "count": sum(key_counter[item] for item in variants),
+        }
+        for normalized, variants in case_groups.items()
+        if len(variants) > 1
+    ]
+    suspected_synonyms = [
+        {"normalizedKey": normalized, "variants": sorted(variants)}
+        for normalized, variants in synonym_groups.items()
+        if len(variants) > 1
+    ]
+    low_signal_keys = [
+        {
+            "key": key,
+            "count": count,
+            "uniqueValues": len(key_unique_values.get(key, set())),
+        }
+        for key, count in key_counter.items()
+        if count >= 5 and len(key_unique_values.get(key, set())) / max(count, 1) <= 0.2
+    ]
+    singleton_keys = [
+        {"key": key, "count": count}
+        for key, count in key_counter.items()
+        if count == 1
+    ]
+
+    return {
+        "emptyValues": [
+            {"key": key, "count": count}
+            for key, count in empty_values.most_common()
+        ],
+        "caseConflicts": sorted(case_conflicts, key=lambda item: item["count"], reverse=True),
+        "suspectedSynonyms": sorted(
+            suspected_synonyms,
+            key=lambda item: len(item["variants"]),
+            reverse=True,
+        ),
+        "lowSignalKeys": sorted(low_signal_keys, key=lambda item: item["count"], reverse=True),
+        "singletonKeys": sorted(singleton_keys, key=lambda item: item["key"]),
+    }
+
+
+def _flatten_search_result(item: Dict[str, Any], index: int) -> Dict[str, Any]:
+    flat_item: Dict[str, Any] = {
+        "id": index,
+        "page": item.get("page", ""),
+        "block_content": item.get("block_content", ""),
+        "content": item.get("block_content", ""),
+        "file_path": item.get("file_path", ""),
+        "line_start": item.get("line_start"),
+        "line_end": item.get("line_end"),
+        "block_path": item.get("block_path", ""),
+        "properties": item.get("properties", {}),
+    }
+    reserved_keys = {
+        "id",
+        "page",
+        "block_content",
+        "content",
+        "file_path",
+        "line_start",
+        "line_end",
+        "block_path",
+        "properties",
+        "_missing",
+        "key",
+    }
+    for key, value in item.get("properties", {}).items():
+        target_key = f"prop_{key}" if key in reserved_keys else key
+        flat_item[target_key] = value
+    return flat_item
+
+
+app = FastAPI(title=f"{APP_NAME} API", version=APP_VERSION)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -82,429 +271,407 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- Pydantic Models ---
 
 class ConfigUpdate(BaseModel):
     graph_path: str
 
+
 class SearchRequest(BaseModel):
     query: str
     graph_path: Optional[str] = None
+    case_sensitive: bool = False
 
-# --- API Endpoints ---
+
+class AutoUpdateRequest(BaseModel):
+    enabled: bool
+
+
+class QueryHistoryRequest(BaseModel):
+    history: list[str]
+
+
+class HiddenColumnsRequest(BaseModel):
+    columns: list[str]
+
+
+class ColumnConfigRequest(BaseModel):
+    query_key: str
+    config: dict[str, Any]
+
+
+class SidebarStateRequest(BaseModel):
+    collapsed: bool
+
+
+class LanguageRequest(BaseModel):
+    language: str
+
+
+class QueryCaseSensitiveRequest(BaseModel):
+    case_sensitive: bool
+
+
+class ResetAllRequest(BaseModel):
+    clear_cache: bool = True
+    clear_logs: bool = True
+    clear_graph_path: bool = True
+    clear_preferences: bool = True
+    clear_history: bool = True
+
 
 @app.get("/api/health")
 async def health_check():
-    return {"status": "ok", "version": "2.2.1"}
+    return {"status": "ok", "version": APP_VERSION, "app": APP_IDENTIFIER}
+
 
 @app.get("/api/config")
 async def get_config():
-    """获取当前配置"""
-    try:
-        cfg = await run_in_executor(config.load_config)
-        return cfg
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    return await run_in_executor(config.load_config)
+
 
 @app.post("/api/config")
 async def update_config(data: ConfigUpdate):
-    """更新配置"""
-    try:
-        cfg = await run_in_executor(config.load_config)
-        cfg["graph_path"] = data.graph_path
-        await run_in_executor(config.save_config, cfg)
-        return {"status": "success", "config": cfg}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/api/cache/build")
-async def build_cache(graph_path: str = Body(..., embed=True)):
-    """重建指定路径的缓存"""
-    if not graph_path or not Path(graph_path).is_dir():
+    graph_path = data.graph_path.strip()
+    if graph_path and not Path(graph_path).is_dir():
         raise HTTPException(status_code=400, detail="Invalid graph path")
-    
-    try:
-        # 定义一个简单的回调函数用于接收进度（目前仅打印）
-        def progress_callback(msg):
-            print(f"[Cache Build] {msg}")
-            
-        file_count = await handle_build_cache(graph_path, progress_callback)
-        return {"status": "success", "file_count": file_count}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/api/cache/clear")
-async def clear_cache_endpoint():
-    """清除缓存文件"""
-    try:
-        await run_in_executor(cache.clear_all_cache)
-        return {"status": "success"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    current = await run_in_executor(config.load_config)
+    previous_path = current.get("graph_path", "")
+    updated = await run_in_executor(config.update_config, {"graph_path": graph_path})
 
-@app.post("/api/config/clear-sort-memory")
-async def clear_sort_memory():
-    """清除排序记忆"""
-    try:
-        from config import clear_sort_memory as do_clear
-        await run_in_executor(do_clear)
-        return {"status": "success"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/api/reset-all")
-async def reset_all_data():
-    """恢复出厂设置 - 清除所有配置、缓存、搜索记录"""
-    try:
-        # 1. 清除缓存目录
-        await run_in_executor(cache.clear_all_cache)
-        
-        # 2. 重置配置文件为空
-        empty_config = {}
-        await run_in_executor(config.save_config, empty_config)
-        
-        return {"status": "success", "message": "所有数据已清除"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/api/config/auto-update")
-async def set_auto_update(data: dict = Body(...)):
-    """设置自动更新选项 - 使用文件系统监听"""
-    from file_watcher import file_watcher
-    
-    try:
-        enabled = data.get("enabled", False)
-        cfg = await run_in_executor(config.load_config)
-        cfg["auto_update_enabled"] = enabled
-        await run_in_executor(config.save_config, cfg)
-        
-        # 启动或停止文件监听
-        graph_path = cfg.get("graph_path")
-        if enabled and graph_path:
+    if updated.get("auto_update_enabled"):
+        if graph_path:
             file_watcher.start_watching(graph_path)
         else:
             file_watcher.stop_watching()
-        
-        return {"status": "success", "watching": file_watcher.is_watching()}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    elif previous_path and previous_path != graph_path:
+        file_watcher.clear_pending_changes()
+
+    return {
+        "status": "success",
+        "config": updated,
+        "watching": file_watcher.is_watching(),
+    }
+
+
+@app.post("/api/cache/build")
+async def build_cache(graph_path: str = Body(..., embed=True)):
+    _validate_graph_path(graph_path)
+    result = await run_in_executor(_rebuild_cache_sync, graph_path)
+    return {
+        "status": "success",
+        "file_count": result["file_count"],
+        "indexed_file_count": result["indexed_file_count"],
+        "block_count": result["block_count"],
+    }
+
+
+@app.post("/api/cache/clear")
+async def clear_cache_endpoint():
+    await run_in_executor(cache.clear_all_cache)
+    return {"status": "success"}
+
+
+@app.post("/api/config/clear-sort-memory")
+async def clear_sort_memory():
+    await run_in_executor(config.clear_sort_memory)
+    return {"status": "success"}
+
+
+@app.post("/api/reset-all")
+async def reset_all_data(data: ResetAllRequest | None = None):
+    options = data or ResetAllRequest()
+
+    if options.clear_cache:
+        await run_in_executor(cache.clear_all_cache)
+    if options.clear_logs:
+        await run_in_executor(_clear_logs)
+
+    await run_in_executor(
+        config.reset_config,
+        clear_graph_path=options.clear_graph_path,
+        clear_preferences=options.clear_preferences,
+        clear_history=options.clear_history,
+    )
+
+    file_watcher.stop_watching()
+    file_watcher.clear_pending_changes()
+    file_watcher.set_last_apply_failures([])
+
+    return {"status": "success", "message": "所有数据已清除"}
+
+
+@app.post("/api/config/auto-update")
+async def set_auto_update(data: AutoUpdateRequest):
+    updated = await run_in_executor(config.update_config, {"auto_update_enabled": data.enabled})
+    graph_path = updated.get("graph_path", "")
+    watching = False
+    if data.enabled and graph_path:
+        watching = file_watcher.start_watching(graph_path)
+    else:
+        file_watcher.stop_watching()
+    return {"status": "success", "watching": watching}
+
 
 @app.get("/api/check-updates")
 async def check_for_updates():
-    """获取文件监听器状态和待更新文件数"""
-    from file_watcher import file_watcher
-    
     status = file_watcher.get_status()
     return {
         "needs_update": status["pending_count"] > 0,
         "changed_count": status["pending_count"],
         "watching": status["watching"],
-        "enabled": status["enabled"]
+        "enabled": status["enabled"],
+        "failed_count": status["failed_count"],
+        "watch_path": status["path"],
     }
+
 
 @app.post("/api/apply-updates")
 async def apply_incremental_updates():
-    """应用增量更新 - 只处理变动的文件"""
-    from file_watcher import file_watcher
-    
-    try:
-        pending_files = file_watcher.get_pending_changes()
-        
-        if not pending_files:
-            return {"status": "success", "updated_count": 0, "message": "没有待更新的文件"}
-        
-        cfg = await run_in_executor(config.load_config)
-        graph_path = cfg.get("graph_path")
-        
-        if not graph_path:
-            return {"status": "error", "message": "未配置数据源路径"}
-        
-        # 加载现有缓存
-        cache_data = await run_in_executor(cache.load_cache, graph_path)
-        
-        updated_count = 0
-        for file_path in pending_files:
-            file_path = Path(file_path)
-            
+    cfg = await run_in_executor(config.load_config)
+    graph_path = _validate_graph_path(cfg.get("graph_path", ""))
+    pending_files = file_watcher.get_pending_changes()
+
+    if not pending_files:
+        return {
+            "status": "success",
+            "updated_count": 0,
+            "failed_count": 0,
+            "skipped_count": 0,
+            "failures": [],
+        }
+
+    payload = await ensure_cache_ready(graph_path)
+    files = dict(payload.get("files", {}))
+    updated_count = 0
+    skipped_count = 0
+    failures: list[str] = []
+
+    for pending_file in pending_files:
+        if not core.is_path_in_graph_scope(graph_path, pending_file):
+            skipped_count += 1
+            continue
+
+        file_path = Path(pending_file)
+        try:
             if not file_path.exists():
-                # 文件已删除，从缓存中移除
-                file_key = str(file_path)
-                if file_key in cache_data:
-                    del cache_data[file_key]
+                if files.pop(str(file_path), None) is not None:
                     updated_count += 1
-            else:
-                # 文件新建或修改，重新解析
-                try:
-                    blocks = core.parse_file_for_properties(str(file_path))
-                    cache_data[str(file_path)] = {
-                        "blocks": blocks,
-                        "mtime": file_path.stat().st_mtime
-                    }
-                    updated_count += 1
-                except Exception as e:
-                    print(f"[IncrementalUpdate] Error parsing {file_path}: {e}")
-        
-        # 保存更新后的缓存
-        await run_in_executor(cache.save_cache, graph_path, cache_data)
-        
-        # 清空待处理队列
-        file_watcher.clear_pending_changes()
-        
-        return {"status": "success", "updated_count": updated_count}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+                else:
+                    skipped_count += 1
+                continue
+
+            blocks = await run_in_executor(core.parse_file_for_properties, str(file_path))
+            files[str(file_path)] = {
+                "blocks": blocks,
+                "mtime": file_path.stat().st_mtime,
+            }
+            updated_count += 1
+        except Exception as exc:
+            logger.exception("Incremental update failed for %s: %s", pending_file, exc)
+            failures.append(str(file_path))
+
+    await run_in_executor(cache.save_cache, graph_path, {"files": files})
+    file_watcher.clear_pending_changes()
+    file_watcher.set_last_apply_failures(failures)
+
+    return {
+        "status": "success",
+        "updated_count": updated_count,
+        "failed_count": len(failures),
+        "skipped_count": skipped_count,
+        "failures": failures[:10],
+    }
+
 
 @app.post("/api/open-data-dir")
 async def open_data_dir():
-    """打开用户数据存储目录"""
-    import subprocess
-    import platform
-    from config import get_app_data_dir
-    
-    data_dir = str(get_app_data_dir())
     try:
-        if platform.system() == "Windows":
-            os.startfile(data_dir)
-        elif platform.system() == "Darwin":
-            subprocess.Popen(["open", data_dir])
-        else:
-            subprocess.Popen(["xdg-open", data_dir])
+        _open_directory(config.get_app_data_dir())
         return {"status": "success"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as exc:
+        logger.exception("Failed to open data dir: %s", exc)
+        raise HTTPException(status_code=500, detail="Failed to open data directory")
 
-# --- 用户偏好存储 API ---
+
+@app.post("/api/open-log-dir")
+async def open_log_dir():
+    try:
+        _open_directory(config.get_log_dir())
+        return {"status": "success"}
+    except Exception as exc:
+        logger.exception("Failed to open log dir: %s", exc)
+        raise HTTPException(status_code=500, detail="Failed to open log directory")
+
 
 @app.get("/api/preferences")
 async def get_preferences():
-    """获取用户偏好（查询历史、全局隐藏列等）"""
-    try:
-        cfg = await run_in_executor(config.load_config)
-        graph_path = cfg.get("graph_path", "")
-        # 如果获取不到 graph_path 默认返回 main
-        graph_name = os.path.basename(graph_path.strip(os.sep)) if graph_path else "main"
-        
-        return {
-            "query_history": cfg.get("query_history", []),
-            "global_hidden_columns": cfg.get("global_hidden_columns", []),
-            "column_configs": cfg.get("column_configs", {}),
-            "sidebar_collapsed": cfg.get("sidebar_collapsed", False),
-            "auto_update_enabled": cfg.get("auto_update_enabled", False),
-            "graph_name": graph_name
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    cfg = await run_in_executor(config.load_config)
+    graph_path = cfg.get("graph_path", "")
+    graph_name = Path(graph_path).name if graph_path else "main"
+    return {
+        "query_history": cfg.get("query_history", []),
+        "global_hidden_columns": cfg.get("global_hidden_columns", []),
+        "column_configs": cfg.get("column_configs", {}),
+        "sidebar_collapsed": cfg.get("sidebar_collapsed", False),
+        "auto_update_enabled": cfg.get("auto_update_enabled", False),
+        "query_case_sensitive": cfg.get("query_case_sensitive", False),
+        "graph_name": graph_name,
+        "language": cfg.get("language", "zh"),
+        "data_dir": str(config.get_app_data_dir()),
+        "log_dir": str(config.get_log_dir()),
+        "cache_version": cache.CACHE_SCHEMA_VERSION,
+    }
+
 
 @app.post("/api/preferences/query-history")
-async def save_query_history(data: dict = Body(...)):
-    """保存查询历史"""
-    try:
-        history = data.get("history", [])
-        cfg = await run_in_executor(config.load_config)
-        cfg["query_history"] = history[:20]  # 最多保存20条
-        await run_in_executor(config.save_config, cfg)
-        return {"status": "success"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+async def save_query_history(data: QueryHistoryRequest):
+    updated = await run_in_executor(config.update_config, {"query_history": data.history[:20]})
+    return {"status": "success", "history": updated.get("query_history", [])}
+
 
 @app.post("/api/preferences/global-hidden-columns")
-async def save_global_hidden_columns(data: dict = Body(...)):
-    """保存全局隐藏列"""
-    try:
-        columns = data.get("columns", [])
-        cfg = await run_in_executor(config.load_config)
-        cfg["global_hidden_columns"] = columns
-        await run_in_executor(config.save_config, cfg)
-        return {"status": "success"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+async def save_global_hidden_columns(data: HiddenColumnsRequest):
+    updated = await run_in_executor(config.update_config, {"global_hidden_columns": data.columns})
+    return {"status": "success", "columns": updated.get("global_hidden_columns", [])}
+
 
 @app.post("/api/preferences/column-config")
-async def save_column_config(data: dict = Body(...)):
-    """保存某个查询的列配置"""
-    try:
-        query_key = data.get("query_key", "")
-        column_config = data.get("config", {})
-        cfg = await run_in_executor(config.load_config)
-        if "column_configs" not in cfg:
-            cfg["column_configs"] = {}
-        cfg["column_configs"][query_key] = column_config
-        await run_in_executor(config.save_config, cfg)
-        return {"status": "success"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+async def save_column_config(data: ColumnConfigRequest):
+    cfg = await run_in_executor(config.load_config)
+    column_configs = dict(cfg.get("column_configs", {}))
+    column_configs[data.query_key] = data.config
+    await run_in_executor(config.update_config, {"column_configs": column_configs})
+    return {"status": "success"}
+
 
 @app.post("/api/preferences/sidebar")
-async def save_sidebar_state(data: dict = Body(...)):
-    """保存侧边栏折叠状态"""
-    try:
-        collapsed = data.get("collapsed", False)
-        cfg = await run_in_executor(config.load_config)
-        cfg["sidebar_collapsed"] = collapsed
-        await run_in_executor(config.save_config, cfg)
-        return {"status": "success"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+async def save_sidebar_state(data: SidebarStateRequest):
+    await run_in_executor(config.update_config, {"sidebar_collapsed": data.collapsed})
+    return {"status": "success"}
+
+
+@app.post("/api/preferences/language")
+async def save_language(data: LanguageRequest):
+    updated = await run_in_executor(config.set_language, data.language)
+    return {"status": "success", "language": updated.get("language", "zh")}
+
+
+@app.post("/api/preferences/query-case-sensitive")
+async def save_query_case_sensitive(data: QueryCaseSensitiveRequest):
+    updated = await run_in_executor(
+        config.update_config,
+        {"query_case_sensitive": data.case_sensitive},
+    )
+    return {
+        "status": "success",
+        "query_case_sensitive": updated.get("query_case_sensitive", False),
+    }
+
 
 @app.post("/api/search")
 async def search(req: SearchRequest):
-    """执行高级查询"""
-    path = req.graph_path
-    if not path:
-        # 尝试从配置加载默认路径
-        cfg = config.load_config()
-        path = cfg.get("graph_path")
-    
-    if not path or not Path(path).is_dir():
-        raise HTTPException(status_code=400, detail="Graph path not configured or invalid")
-    
+    cfg = await run_in_executor(config.load_config)
+    graph_path = _validate_graph_path(req.graph_path or cfg.get("graph_path", ""))
+
     try:
-        # 1. 确保缓存是最新的（可选，这里为了性能假设已手动更新，或者可以静默更新）
-        # 这里为了响应速度，假设用户已点击更新缓存，或者前端单独调用 build_cache
-        # 但为了用户体验，我们可以做一次轻量级检查或静默更新（视 logic_adapter 实现而定）
-        # 暂时直接加载缓存
-        
-        cache_data = await run_in_executor(cache.load_cache, path)
-        all_blocks = await run_in_executor(cache.get_all_blocks_from_cache, cache_data)
-        results = await run_in_executor(_perform_search_on_cache, all_blocks, req.query)
-        
-        # 展平结果以便前端表格展示
-        flat_results = []
-        if results:
-            for i, item in enumerate(results):
-                flat_item = {
-                    'id': i, 
-                    'page': item.get('page', ''), 
-                    'content': item.get('content', '')
-                }
-                # 提取属性，防止覆盖内置保留字段
-                properties = item.get('properties', {})
-                if properties:
-                    reserved_keys = {'id', 'page', 'content', '_missing', 'key'}
-                    for k, v in properties.items():
-                        if k in reserved_keys:
-                            flat_item[f"prop_{k}"] = v
-                        else:
-                            flat_item[k] = v
-                
-                # 传递 file_path 以便前端后续扩展使用
-                file_path = item.get('file_path')
-                if file_path:
-                    flat_item['file_path'] = file_path
-                
-                flat_results.append(flat_item)
-                
-        return {"results": flat_results, "count": len(flat_results)}
-        
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=str(e))
+        payload = await ensure_cache_ready(graph_path)
+        all_blocks = await run_in_executor(cache.get_all_blocks_from_cache, payload)
+        results = await run_in_executor(
+            search_blocks,
+            all_blocks,
+            req.query,
+            case_sensitive=req.case_sensitive,
+        )
+    except QuerySyntaxError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": exc.code, "message": exc.message},
+        )
+    except Exception as exc:
+        logger.exception("Search failed: %s", exc)
+        raise HTTPException(status_code=500, detail="Search failed")
+
+    flat_results = [_flatten_search_result(item, index) for index, item in enumerate(results)]
+    return {"results": flat_results, "count": len(flat_results)}
+
 
 @app.get("/api/stats")
 async def get_stats():
-    """获取所有属性键的统计信息"""
-    from collections import Counter
-    
-    cfg = config.load_config()
-    path = cfg.get("graph_path")
-    
-    if not path or not Path(path).is_dir():
-        raise HTTPException(status_code=400, detail="Graph path not configured")
-    
-    try:
-        cache_data = await run_in_executor(cache.load_cache, path)
-        all_blocks = await run_in_executor(cache.get_all_blocks_from_cache, cache_data)
-        
-        # 统计所有属性键
-        key_counter = Counter()
-        key_unique_values = {}
-        
-        for block in all_blocks:
-            props = block.get('properties', {})
-            for key, value in props.items():
-                key_counter[key] += 1
-                if key not in key_unique_values:
-                    key_unique_values[key] = set()
-                key_unique_values[key].add(str(value))
-        
-        keys = [
-            {"key": k, "count": v, "uniqueValues": len(key_unique_values.get(k, set()))}
-            for k, v in key_counter.most_common()  # 返回全部，按次数排序
-        ]
-        
-        return {"keys": keys, "total": len(keys)}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    cfg = await run_in_executor(config.load_config)
+    graph_path = _validate_graph_path(cfg.get("graph_path", ""))
+    payload = await ensure_cache_ready(graph_path)
+    all_blocks = await run_in_executor(cache.get_all_blocks_from_cache, payload)
+    aggregates = _collect_property_aggregates(all_blocks)
+    keys = _build_key_stats(aggregates)
+    return {"keys": keys, "total": len(keys)}
+
 
 @app.get("/api/stats/values/{key}")
 async def get_value_distribution(key: str):
-    """获取指定属性键的值分布"""
-    from collections import Counter
-    
-    cfg = config.load_config()
-    path = cfg.get("graph_path")
-    
-    if not path or not Path(path).is_dir():
-        raise HTTPException(status_code=400, detail="Graph path not configured")
-    
-    try:
-        cache_data = await run_in_executor(cache.load_cache, path)
-        all_blocks = await run_in_executor(cache.get_all_blocks_from_cache, cache_data)
-        
-        value_counter = Counter()
-        for block in all_blocks:
-            props = block.get('properties', {})
-            if key in props:
-                value_counter[str(props[key])] += 1
-        
-        values = [
-            {"value": v, "count": c}
-            for v, c in value_counter.most_common()  # 返回全部，按次数排序
-        ]
-        
-        return {"values": values, "total": len(values)}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    cfg = await run_in_executor(config.load_config)
+    graph_path = _validate_graph_path(cfg.get("graph_path", ""))
+    payload = await ensure_cache_ready(graph_path)
+    all_blocks = await run_in_executor(cache.get_all_blocks_from_cache, payload)
+    aggregates = _collect_property_aggregates(all_blocks)
+    return _build_key_value_distribution(aggregates, key)
 
 
-# --- 静态文件托管 (必须在 API 路由之后) ---
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+@app.get("/api/stats/global-values")
+async def get_global_value_stats():
+    cfg = await run_in_executor(config.load_config)
+    graph_path = _validate_graph_path(cfg.get("graph_path", ""))
+    payload = await ensure_cache_ready(graph_path)
+    all_blocks = await run_in_executor(cache.get_all_blocks_from_cache, payload)
+    aggregates = _collect_property_aggregates(all_blocks)
+    return _build_global_value_stats(aggregates)
 
-# 支持 PyInstaller 打包：优先使用环境变量指定的路径
-static_dir_path = os.environ.get('STATIC_FILES_PATH', str(ROOT_DIR / "frontend" / "dist"))
+
+@app.get("/api/stats/value-keys")
+async def get_value_key_distribution(value: str):
+    cfg = await run_in_executor(config.load_config)
+    graph_path = _validate_graph_path(cfg.get("graph_path", ""))
+    payload = await ensure_cache_ready(graph_path)
+    all_blocks = await run_in_executor(cache.get_all_blocks_from_cache, payload)
+    aggregates = _collect_property_aggregates(all_blocks)
+    return _build_value_key_distribution(aggregates, value)
+
+
+@app.get("/api/stats/diagnostics")
+async def get_stats_diagnostics():
+    cfg = await run_in_executor(config.load_config)
+    graph_path = _validate_graph_path(cfg.get("graph_path", ""))
+    payload = await ensure_cache_ready(graph_path)
+    all_blocks = await run_in_executor(cache.get_all_blocks_from_cache, payload)
+    aggregates = _collect_property_aggregates(all_blocks)
+    return _build_diagnostics(aggregates)
+
+
+static_dir_path = os.environ.get("STATIC_FILES_PATH", str(ROOT_DIR / "frontend" / "dist"))
 static_dir = Path(static_dir_path)
 
 if static_dir.exists():
-    # 1. 优先挂载 assets 目录 (Vite 构建产物默认在 assets 下)
     assets_dir = static_dir / "assets"
     if assets_dir.exists():
         app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="assets")
 
-    # 2. 根路径返回 index.html
     @app.get("/")
     async def serve_root():
         return FileResponse(static_dir / "index.html")
 
-    # 3. 其他路径：尝试查找文件，找不到则返回 index.html (SPA 支持)
     @app.get("/{path:path}")
     async def serve_static_or_fallback(path: str):
-        # 排除 API 路径
         if path.startswith("api/"):
             raise HTTPException(status_code=404)
-        
+
         file_path = static_dir / path
         if file_path.exists() and file_path.is_file():
             return FileResponse(file_path)
-        
         return FileResponse(static_dir / "index.html")
-        
-    print(f"Static files configured from {static_dir}")
-else:
-    print(f"Warning: Static directory not found at {static_dir}")
 
-# --- 启动入口 ---
+
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=False)
+
+    port = int(os.environ.get("PROPERTY_QUERY_PORT", "8000"))
+    uvicorn.run(app, host="127.0.0.1", port=port, reload=False, log_level="warning")

@@ -1,191 +1,433 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 
-// 支持的语言
+import { apiService } from './api';
+
 export type Locale = 'zh' | 'en';
 
-// 翻译字典
 const translations: Record<Locale, Record<string, string>> = {
-    zh: {
-        // 通用
-        'app.title': 'Logseq 属性查询工具',
-        'common.search': '搜索',
-        'common.save': '保存',
-        'common.cancel': '取消',
-        'common.apply': '应用',
-        'common.confirm': '确认',
-        'common.loading': '加载中...',
-        'common.success': '成功',
-        'common.error': '错误',
+  zh: {
+    'common.search': '搜索',
+    'common.save': '保存',
+    'common.cancel': '取消',
+    'common.apply': '应用',
+    'common.confirm': '确认',
+    'common.loading': '加载中...',
+    'common.success': '成功',
+    'common.error': '错误',
+    'common.refresh': '刷新数据',
+    'common.export': '导出',
+    'common.open': '打开',
+    'common.clear': '清理',
+    'common.close': '关闭',
+    'common.path': '路径',
+    'common.none': '无',
+    'common.files': '文件',
+    'common.results': '结果',
+    'common.copy': '复制',
+    'common.on': '开',
+    'common.off': '关',
 
-        // 导航
-        'nav.query': '高级查询',
-        'nav.charts': '数据统计',
-        'nav.settings': '设置',
+    'nav.query': '高级查询',
+    'nav.charts': '数据统计',
+    'nav.settings': '设置',
 
-        // 查询页面
-        'query.title': '高级属性查询',
-        'query.placeholder': '输入查询 (如: has:date)',
-        'query.history': '历史记录',
-        'query.columnManage': '列管理',
-        'query.saveView': '保存视图',
-        'query.resultCount': '找到 {count} 条结果',
-        'query.noResults': '无结果',
-        'query.tip': '点击 Page 可跳转 Logseq | 右键显示更多操作 | 缺失文件以红色标注',
+    'query.title': '高级属性查询',
+    'query.placeholder': '输入查询，例如：has:date AND status:done',
+    'query.history': '历史记录',
+    'query.columnManage': '列管理',
+    'query.exportData': '导出数据',
+    'query.helpTitle': '查询帮助',
+    'query.helpSyntax': '查询语法',
+    'query.helpExactMode': '精确匹配模式',
+    'query.helpExact': '输入属性键:输入属性值，键和值都按完整内容匹配',
+    'query.helpFuzzyMode': '模糊匹配模式',
+    'query.helpFuzzy': '输入属性键~输入属性值，在指定键下按包含关系匹配值',
+    'query.helpHasMode': '键存在模式',
+    'query.helpHas': 'has 语法不变:输入属性键，只判断该属性键是否出现',
+    'query.helpTextMode': '全文模式',
+    'query.helpText': '直接输入文本，会在页面名、块内容、属性键和属性值中搜索',
+    'query.helpLogic': '逻辑运算符',
+    'query.helpAnd': '且（同时满足）',
+    'query.helpOr': '或（满足其一）',
+    'query.helpExample': '示例',
+    'query.caseSensitive': '大小写敏感',
+    'query.caseSensitiveTooltip': '大小写敏感：{state}',
+    'query.caseSensitiveHint': '点击输入框右侧的 Aa 可切换大小写敏感。',
+    'query.searchSuccess': '找到 {count} 条结果',
+    'query.searchError': '查询失败',
+    'query.empty': '请输入查询语句',
+    'query.clearHistory': '清空历史记录',
+    'query.clearHistorySuccess': '历史记录已清空',
+    'query.columnsSaved': '列设置已保存',
+    'query.noExportData': '没有数据可导出',
+    'query.copySuccess': '已复制',
+    'query.pageHint': '点击在 Logseq 中打开页面',
+    'query.locateHint': '定位到块',
+    'query.locateFallback': '已打开页面，请定位到第 {line} 行附近',
+    'query.doubleCopy': '双击复制',
+    'query.actions': '操作',
+    'query.locate': '定位块',
+    'query.page': '页面',
+    'query.blockContent': '块内容',
+    'query.blockPath': '块路径',
+    'query.filePath': '文件路径',
+    'query.lineStart': '起始行',
+    'query.lineEnd': '结束行',
+    'query.exportFormat': '选择导出格式：',
+    'query.exportJson': 'JSON 格式',
+    'query.exportCsv': 'CSV 格式（Excel 兼容）',
+    'query.exportDone': '已导出 {count} 条数据为 {format}',
+    'query.selectAll': '全选',
+    'query.selectNone': '全不选',
+    'query.resetOrder': '重置顺序',
+    'query.globalHideHint': '勾选“全局”将在所有查询中隐藏该列',
+    'query.globalHide': '全局',
+    'query.queryHelpText': '拖拽列头图标调整顺序，拖拽列边框调整宽度，点击 Page 跳转 Logseq。',
+    'query.noResults': '暂无结果',
 
-        // 列管理
-        'column.selectAll': '全选',
-        'column.onlyPage': '仅 page',
+    'charts.title': '数据统计',
+    'charts.statsTab': '键统计',
+    'charts.valueStatsTab': '值统计',
+    'charts.diagnosticsTab': '数据诊断',
+    'charts.keyCount': '所有属性键（共 {keys} 个，总出现 {count} 次）',
+    'charts.valueCount': '所有值（共 {values} 个，总出现 {count} 次）',
+    'charts.searchKeys': '搜索属性键...',
+    'charts.searchValues': '搜索值...',
+    'charts.showing': '显示 {current} / {total}',
+    'charts.key': '属性键',
+    'charts.count': '出现次数',
+    'charts.percentage': '占比',
+    'charts.value': '值',
+    'charts.uniqueValues': '唯一值数',
+    'charts.keyCountForValue': '涉及属性键数',
+    'charts.topKeys': '主要属性键',
+    'charts.action': '操作',
+    'charts.viewDistribution': '查看分布',
+    'charts.viewKeyDistribution': '查看键分布',
+    'charts.backToList': '返回属性列表',
+    'charts.currentKey': '当前属性',
+    'charts.currentValue': '当前值',
+    'charts.totalValues': '共 {count} 个不同值，总出现 {total} 次',
+    'charts.totalKeys': '共 {count} 个不同键，总出现 {total} 次',
+    'charts.noData': '暂无统计数据，请先在设置中配置路径并重建缓存',
+    'charts.loadError': '加载统计数据失败，请先在设置中配置路径并重建缓存',
+    'charts.valueError': '加载值分布失败',
+    'charts.keyDistributionError': '加载键分布失败',
+    'charts.chartTitle': '{key} 值分布 (Top 20)',
+    'charts.valueKeyChartTitle': '{value} 键分布 (Top 20)',
+    'charts.emptyMatch': '暂无匹配数据',
+    'charts.emptyValue': '(空值)',
+    'charts.emptyValues': '空值属性',
+    'charts.caseConflicts': '大小写冲突键',
+    'charts.synonyms': '疑似同义键',
+    'charts.lowSignal': '低区分度键',
+    'charts.singleton': '仅出现一次的键',
+    'charts.variantCount': '变体数量',
+    'charts.variants': '变体',
+    'charts.normalizedKey': '归一化键',
 
-        // 右键菜单
-        'menu.copyCell': '复制单元格',
-        'menu.copyRow': '复制整行 (JSON)',
-        'menu.openLogseq': '在 Logseq 中打开',
-        'menu.exportSelected': '导出选中行为 JSON',
+    'settings.title': '设置',
+    'settings.language': '语言',
+    'settings.langChinese': '中文',
+    'settings.langEnglish': 'English',
+    'settings.pathTitle': 'Logseq 图谱路径',
+    'settings.pathDesc': '请输入包含 pages 和 journals 的图谱目录；若不是标准结构，也支持递归扫描整个目录。',
+    'settings.pathPlaceholder': '例如：D:\\Logseq\\MyGraph',
+    'settings.cacheTitle': '缓存与更新',
+    'settings.cacheHint': '首次使用或升级后会自动重建缺失/过期缓存，也可手动重建。',
+    'settings.rebuildCache': '重建缓存',
+    'settings.clearCache': '清除缓存',
+    'settings.autoUpdateTitle': '自动随数据源更新',
+    'settings.autoUpdateDesc': '开启后会监听图谱文件变化，并支持增量更新。',
+    'settings.autoUpdateOn': '已开启文件监听，变动将自动检测',
+    'settings.autoUpdateOff': '已关闭自动更新',
+    'settings.autoUpdateFail': '文件监听启动失败，请检查数据源路径',
+    'settings.applyUpdates': '增量更新',
+    'settings.applyUpdatesLoading': '正在增量更新...',
+    'settings.applyUpdatesDone': '已更新 {count} 个文件',
+    'settings.applyUpdatesNone': '没有需要更新的内容',
+    'settings.applyUpdatesFail': '更新失败',
+    'settings.cleanupTitle': '数据目录与清理',
+    'settings.clearSortMemory': '清除排序记忆',
+    'settings.openDataDir': '打开数据目录',
+    'settings.openLogDir': '打开日志目录',
+    'settings.dataDir': '数据目录',
+    'settings.logDir': '日志目录',
+    'settings.resetTitle': '危险操作',
+    'settings.resetWarning': '以下操作不可恢复',
+    'settings.resetDesc': '你可以按类别清理缓存、日志、界面偏好、历史记录和图谱路径。',
+    'settings.resetAll': '分类清理 / 恢复出厂',
+    'settings.resetConfirmTitle': '确认清理数据',
+    'settings.resetWait': '为防止误操作，请等待 {seconds} 秒后确认',
+    'settings.resetReady': '现在可以确认清理',
+    'settings.resetLoading': '正在清除数据...',
+    'settings.resetSuccess': '数据清理完成，即将刷新页面...',
+    'settings.resetFail': '清除失败',
+    'settings.resetCache': '缓存',
+    'settings.resetLogs': '日志',
+    'settings.resetPreferences': '界面偏好',
+    'settings.resetHistory': '查询历史',
+    'settings.resetGraphPath': '图谱路径',
+    'settings.aboutTitle': '关于',
+    'settings.aboutVersion': 'Property Query v2.4.0',
+    'settings.techStack': '基于 FastAPI + React + Ant Design + ECharts 构建',
+    'settings.checkUpdates': '检查更新',
+    'settings.openDirSuccess': '目录已打开',
+    'settings.openDirFail': '打开目录失败',
+    'settings.savePathSuccess': '路径已保存',
+    'settings.savePathError': '保存路径失败',
+    'settings.rebuildSuccess': '缓存已重建（共 {count} 个文件）',
+    'settings.rebuildError': '缓存重建失败',
+    'settings.clearCacheSuccess': '缓存已清除',
+    'settings.clearSortSuccess': '排序记忆已清除',
+    'settings.operationFail': '操作失败',
 
-        // 图表页面
-        'charts.title': '数据统计',
-        'charts.allKeys': '所有属性键',
-        'charts.viewDistribution': '查看分布',
-        'charts.backToList': '返回属性列表',
-        'charts.currentKey': '当前属性',
-        'charts.noData': '暂无统计数据，请先在设置中配置路径并重建缓存',
+    'app.loadingPage': '页面加载中...',
+  },
+  en: {
+    'common.search': 'Search',
+    'common.save': 'Save',
+    'common.cancel': 'Cancel',
+    'common.apply': 'Apply',
+    'common.confirm': 'Confirm',
+    'common.loading': 'Loading...',
+    'common.success': 'Success',
+    'common.error': 'Error',
+    'common.refresh': 'Refresh',
+    'common.export': 'Export',
+    'common.open': 'Open',
+    'common.clear': 'Clear',
+    'common.close': 'Close',
+    'common.path': 'Path',
+    'common.none': 'None',
+    'common.files': 'Files',
+    'common.results': 'Results',
+    'common.copy': 'Copy',
+    'common.on': 'On',
+    'common.off': 'Off',
 
-        // 设置页面
-        'settings.title': '设置',
-        'settings.pathTitle': 'Logseq 图谱路径',
-        'settings.pathDesc': '请输入您的 Logseq 图谱根目录路径（包含 pages 和 journals 文件夹的目录）',
-        'settings.pathPlaceholder': '例如: D:\\Logseq\\MyGraph',
-        'settings.cacheTitle': '缓存管理',
-        'settings.cacheHint': '首次使用或 Logseq 内容更新后，请点击「重建缓存」以获取最新数据',
-        'settings.rebuildCache': '重建缓存',
-        'settings.clearCache': '清除缓存',
-        'settings.clearCacheConfirm': '确认清除缓存?',
-        'settings.clearCacheDesc': '将删除本地缓存文件，下次使用需重新构建',
-        'settings.cleanupTitle': '清理设置',
-        'settings.clearSortMemory': '清除排序记忆',
-        'settings.clearColumnConfig': '清除列配置',
-        'settings.aboutTitle': '关于',
-        'settings.version': 'Logseq 属性查询工具 v2.0',
-        'settings.techStack': '基于 FastAPI + React + AG Grid 构建',
+    'nav.query': 'Advanced Query',
+    'nav.charts': 'Statistics',
+    'nav.settings': 'Settings',
 
-        // 语言
-        'settings.language': '语言',
-        'settings.langChinese': '中文',
-        'settings.langEnglish': 'English',
-    },
-    en: {
-        // Common
-        'app.title': 'Logseq Property Query Tool',
-        'common.search': 'Search',
-        'common.save': 'Save',
-        'common.cancel': 'Cancel',
-        'common.apply': 'Apply',
-        'common.confirm': 'Confirm',
-        'common.loading': 'Loading...',
-        'common.success': 'Success',
-        'common.error': 'Error',
+    'query.title': 'Advanced Property Query',
+    'query.placeholder': 'Enter a query, for example: has:date AND status:done',
+    'query.history': 'History',
+    'query.columnManage': 'Columns',
+    'query.exportData': 'Export Data',
+    'query.helpTitle': 'Query Help',
+    'query.helpSyntax': 'Syntax',
+    'query.helpExactMode': 'Exact match mode',
+    'query.helpExact': 'Enter property key:property value to match both key and value exactly',
+    'query.helpFuzzyMode': 'Fuzzy match mode',
+    'query.helpFuzzy': 'Enter property key~property value to match values by containment under that key',
+    'query.helpHasMode': 'Key existence mode',
+    'query.helpHas': 'Keep has syntax: enter a property key and only check whether it exists',
+    'query.helpTextMode': 'Full-text mode',
+    'query.helpText': 'Enter plain text to search page names, block content, property keys, and property values',
+    'query.helpLogic': 'Logical operators',
+    'query.helpAnd': 'All conditions must match',
+    'query.helpOr': 'Any condition may match',
+    'query.helpExample': 'Example',
+    'query.caseSensitive': 'Case Sensitive',
+    'query.caseSensitiveTooltip': 'Case sensitive: {state}',
+    'query.caseSensitiveHint': 'Click the Aa badge on the right side of the input to toggle case sensitivity.',
+    'query.searchSuccess': 'Found {count} results',
+    'query.searchError': 'Search failed',
+    'query.empty': 'Please enter a query',
+    'query.clearHistory': 'Clear history',
+    'query.clearHistorySuccess': 'History cleared',
+    'query.columnsSaved': 'Column settings saved',
+    'query.noExportData': 'No data to export',
+    'query.copySuccess': 'Copied',
+    'query.pageHint': 'Open page in Logseq',
+    'query.locateHint': 'Locate this block',
+    'query.locateFallback': 'Page opened. Please jump near line {line}',
+    'query.doubleCopy': 'Double-click to copy',
+    'query.actions': 'Actions',
+    'query.locate': 'Locate Block',
+    'query.page': 'Page',
+    'query.blockContent': 'Block Content',
+    'query.blockPath': 'Block Path',
+    'query.filePath': 'File Path',
+    'query.lineStart': 'Line Start',
+    'query.lineEnd': 'Line End',
+    'query.exportFormat': 'Choose export format:',
+    'query.exportJson': 'JSON',
+    'query.exportCsv': 'CSV (Excel-friendly)',
+    'query.exportDone': 'Exported {count} rows as {format}',
+    'query.selectAll': 'Select all',
+    'query.selectNone': 'Clear all',
+    'query.resetOrder': 'Reset order',
+    'query.globalHideHint': 'Selecting "Global" hides this column for all queries.',
+    'query.globalHide': 'Global',
+    'query.queryHelpText': 'Drag the handle to reorder columns, drag borders to resize, and click Page to open Logseq.',
+    'query.noResults': 'No results yet',
 
-        // Navigation
-        'nav.query': 'Advanced Query',
-        'nav.charts': 'Statistics',
-        'nav.settings': 'Settings',
+    'charts.title': 'Statistics',
+    'charts.statsTab': 'Key Stats',
+    'charts.valueStatsTab': 'Value Stats',
+    'charts.diagnosticsTab': 'Data Diagnostics',
+    'charts.keyCount': 'All property keys ({keys} keys, {count} total hits)',
+    'charts.valueCount': 'All values ({values} values, {count} total hits)',
+    'charts.searchKeys': 'Search property keys...',
+    'charts.searchValues': 'Search values...',
+    'charts.showing': 'Showing {current} / {total}',
+    'charts.key': 'Property Key',
+    'charts.count': 'Count',
+    'charts.percentage': 'Percentage',
+    'charts.value': 'Value',
+    'charts.uniqueValues': 'Unique Values',
+    'charts.keyCountForValue': 'Property Keys',
+    'charts.topKeys': 'Top Property Keys',
+    'charts.action': 'Action',
+    'charts.viewDistribution': 'View Distribution',
+    'charts.viewKeyDistribution': 'View Key Distribution',
+    'charts.backToList': 'Back to list',
+    'charts.currentKey': 'Current key',
+    'charts.currentValue': 'Current value',
+    'charts.totalValues': '{count} unique values, {total} total hits',
+    'charts.totalKeys': '{count} unique keys, {total} total hits',
+    'charts.noData': 'No statistics yet. Configure a graph path and rebuild cache first.',
+    'charts.loadError': 'Failed to load statistics. Configure a graph path and rebuild cache first.',
+    'charts.valueError': 'Failed to load value distribution',
+    'charts.keyDistributionError': 'Failed to load key distribution',
+    'charts.chartTitle': '{key} value distribution (Top 20)',
+    'charts.valueKeyChartTitle': '{value} key distribution (Top 20)',
+    'charts.emptyMatch': 'No matching data',
+    'charts.emptyValue': '(Empty)',
+    'charts.emptyValues': 'Empty values',
+    'charts.caseConflicts': 'Case conflicts',
+    'charts.synonyms': 'Suspected synonyms',
+    'charts.lowSignal': 'Low-signal keys',
+    'charts.singleton': 'Single-use keys',
+    'charts.variantCount': 'Variant count',
+    'charts.variants': 'Variants',
+    'charts.normalizedKey': 'Normalized key',
 
-        // Query Page
-        'query.title': 'Advanced Property Query',
-        'query.placeholder': 'Enter query (e.g., has:date)',
-        'query.history': 'History',
-        'query.columnManage': 'Columns',
-        'query.saveView': 'Save View',
-        'query.resultCount': 'Found {count} results',
-        'query.noResults': 'No results',
-        'query.tip': 'Click Page to open in Logseq | Right-click for more options | Missing files in red',
+    'settings.title': 'Settings',
+    'settings.language': 'Language',
+    'settings.langChinese': '中文',
+    'settings.langEnglish': 'English',
+    'settings.pathTitle': 'Logseq Graph Path',
+    'settings.pathDesc': 'Enter the graph folder. Standard pages/journals layouts are preferred, and non-standard folders are scanned recursively.',
+    'settings.pathPlaceholder': 'For example: D:\\Logseq\\MyGraph',
+    'settings.cacheTitle': 'Cache & Updates',
+    'settings.cacheHint': 'Missing or stale cache is rebuilt automatically after upgrades, and you can rebuild it manually at any time.',
+    'settings.rebuildCache': 'Rebuild Cache',
+    'settings.clearCache': 'Clear Cache',
+    'settings.autoUpdateTitle': 'Auto update with source changes',
+    'settings.autoUpdateDesc': 'Watch the graph for file changes and apply incremental updates.',
+    'settings.autoUpdateOn': 'File watching enabled',
+    'settings.autoUpdateOff': 'Auto update disabled',
+    'settings.autoUpdateFail': 'Failed to start file watcher. Check the graph path.',
+    'settings.applyUpdates': 'Apply Updates',
+    'settings.applyUpdatesLoading': 'Applying incremental updates...',
+    'settings.applyUpdatesDone': 'Updated {count} files',
+    'settings.applyUpdatesNone': 'Nothing to update',
+    'settings.applyUpdatesFail': 'Incremental update failed',
+    'settings.cleanupTitle': 'Data Directories & Cleanup',
+    'settings.clearSortMemory': 'Clear Sort Memory',
+    'settings.openDataDir': 'Open Data Directory',
+    'settings.openLogDir': 'Open Log Directory',
+    'settings.dataDir': 'Data directory',
+    'settings.logDir': 'Log directory',
+    'settings.resetTitle': 'Danger Zone',
+    'settings.resetWarning': 'These operations cannot be undone',
+    'settings.resetDesc': 'Clean cache, logs, UI preferences, history, and graph path by category.',
+    'settings.resetAll': 'Categorized Cleanup / Factory Reset',
+    'settings.resetConfirmTitle': 'Confirm cleanup',
+    'settings.resetWait': 'Please wait {seconds} seconds before confirming',
+    'settings.resetReady': 'Cleanup is ready to run',
+    'settings.resetLoading': 'Cleaning data...',
+    'settings.resetSuccess': 'Cleanup finished. Refreshing the page...',
+    'settings.resetFail': 'Cleanup failed',
+    'settings.resetCache': 'Cache',
+    'settings.resetLogs': 'Logs',
+    'settings.resetPreferences': 'UI preferences',
+    'settings.resetHistory': 'Query history',
+    'settings.resetGraphPath': 'Graph path',
+    'settings.aboutTitle': 'About',
+    'settings.aboutVersion': 'Property Query v2.4.0',
+    'settings.techStack': 'Built with FastAPI + React + Ant Design + ECharts',
+    'settings.checkUpdates': 'Check for Updates',
+    'settings.openDirSuccess': 'Directory opened',
+    'settings.openDirFail': 'Failed to open directory',
+    'settings.savePathSuccess': 'Path saved',
+    'settings.savePathError': 'Failed to save path',
+    'settings.rebuildSuccess': 'Cache rebuilt ({count} files scanned)',
+    'settings.rebuildError': 'Failed to rebuild cache',
+    'settings.clearCacheSuccess': 'Cache cleared',
+    'settings.clearSortSuccess': 'Sort memory cleared',
+    'settings.operationFail': 'Operation failed',
 
-        // Column Management
-        'column.selectAll': 'Select All',
-        'column.onlyPage': 'Only page',
-
-        // Context Menu
-        'menu.copyCell': 'Copy Cell',
-        'menu.copyRow': 'Copy Row (JSON)',
-        'menu.openLogseq': 'Open in Logseq',
-        'menu.exportSelected': 'Export Selected as JSON',
-
-        // Charts Page
-        'charts.title': 'Statistics',
-        'charts.allKeys': 'All Property Keys',
-        'charts.viewDistribution': 'View Distribution',
-        'charts.backToList': 'Back to List',
-        'charts.currentKey': 'Current Property',
-        'charts.noData': 'No data. Please configure path and rebuild cache in Settings.',
-
-        // Settings Page
-        'settings.title': 'Settings',
-        'settings.pathTitle': 'Logseq Graph Path',
-        'settings.pathDesc': 'Enter your Logseq graph root directory (containing pages and journals folders)',
-        'settings.pathPlaceholder': 'e.g., D:\\Logseq\\MyGraph',
-        'settings.cacheTitle': 'Cache Management',
-        'settings.cacheHint': 'Click "Rebuild Cache" for first use or after Logseq content updates',
-        'settings.rebuildCache': 'Rebuild Cache',
-        'settings.clearCache': 'Clear Cache',
-        'settings.clearCacheConfirm': 'Clear cache?',
-        'settings.clearCacheDesc': 'This will delete local cache files. Rebuild required next time.',
-        'settings.cleanupTitle': 'Cleanup Settings',
-        'settings.clearSortMemory': 'Clear Sort Memory',
-        'settings.clearColumnConfig': 'Clear Column Config',
-        'settings.aboutTitle': 'About',
-        'settings.version': 'Logseq Property Query Tool v2.0',
-        'settings.techStack': 'Built with FastAPI + React + AG Grid',
-
-        // Language
-        'settings.language': 'Language',
-        'settings.langChinese': '中文',
-        'settings.langEnglish': 'English',
-    }
+    'app.loadingPage': 'Loading page...',
+  },
 };
 
-// Context
 interface I18nContextType {
-    locale: Locale;
-    setLocale: (locale: Locale) => void;
-    t: (key: string, params?: Record<string, string | number>) => string;
+  locale: Locale;
+  setLocale: (locale: Locale) => Promise<void>;
+  t: (key: string, params?: Record<string, string | number>) => string;
 }
 
 const I18nContext = createContext<I18nContextType | undefined>(undefined);
 
-// Provider
 export const I18nProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-    const [locale, setLocale] = useState<Locale>(() => {
-        const saved = localStorage.getItem('app_locale');
-        return (saved === 'en' || saved === 'zh') ? saved : 'zh';
-    });
+  const [locale, setLocaleState] = useState<Locale>(() => {
+    const saved = localStorage.getItem('app_locale');
+    return saved === 'en' || saved === 'zh' ? saved : 'zh';
+  });
 
-    useEffect(() => {
-        localStorage.setItem('app_locale', locale);
-    }, [locale]);
-
-    const t = (key: string, params?: Record<string, string | number>): string => {
-        let text = translations[locale][key] || key;
-        if (params) {
-            Object.entries(params).forEach(([k, v]) => {
-                text = text.replace(`{${k}}`, String(v));
-            });
+  useEffect(() => {
+    let ignore = false;
+    apiService
+      .getPreferences()
+      .then((preferences) => {
+        if (!ignore && preferences.language) {
+          setLocaleState(preferences.language);
+          localStorage.setItem('app_locale', preferences.language);
         }
-        return text;
+      })
+      .catch(() => {
+        // Backend preference loading should not block the UI.
+      });
+    return () => {
+      ignore = true;
     };
+  }, []);
 
-    return (
-        <I18nContext.Provider value={{ locale, setLocale, t }}>
-            {children}
-        </I18nContext.Provider>
-    );
+  const setLocale = async (nextLocale: Locale) => {
+    setLocaleState(nextLocale);
+    localStorage.setItem('app_locale', nextLocale);
+    await apiService.saveLanguage(nextLocale);
+  };
+
+  const t = useMemo(
+    () => (key: string, params?: Record<string, string | number>): string => {
+      let text = translations[locale][key] || key;
+      if (params) {
+        Object.entries(params).forEach(([paramKey, paramValue]) => {
+          text = text.replace(`{${paramKey}}`, String(paramValue));
+        });
+      }
+      return text;
+    },
+    [locale],
+  );
+
+  return (
+    <I18nContext.Provider value={{ locale, setLocale, t }}>
+      {children}
+    </I18nContext.Provider>
+  );
 };
 
-// Hook
 export const useI18n = (): I18nContextType => {
-    const context = useContext(I18nContext);
-    if (!context) {
-        throw new Error('useI18n must be used within I18nProvider');
-    }
-    return context;
+  const context = useContext(I18nContext);
+  if (!context) {
+    throw new Error('useI18n must be used within I18nProvider');
+  }
+  return context;
 };

@@ -1,566 +1,787 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { Input, Button, Layout, message, Space, Typography, Modal, Checkbox, Divider, Select, Tooltip, Table, List, Popover, Radio } from 'antd';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  Button,
+  Checkbox,
+  Divider,
+  Input,
+  Layout,
+  List,
+  message,
+  Modal,
+  Popover,
+  Radio,
+  Select,
+  Space,
+  Table,
+  Tooltip,
+  Typography,
+} from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import { SearchOutlined, SettingOutlined, HistoryOutlined, LinkOutlined, ExportOutlined, UpOutlined, DownOutlined, QuestionCircleOutlined, DeleteOutlined, HolderOutlined } from '@ant-design/icons';
-import { apiService } from '../api';
-import type { SearchResultItem } from '../api';
-
-// DnD Kit
-import { DndContext, closestCenter, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
+import {
+  DeleteOutlined,
+  DownOutlined,
+  ExportOutlined,
+  HistoryOutlined,
+  HolderOutlined,
+  QuestionCircleOutlined,
+  SearchOutlined,
+  SettingOutlined,
+  UpOutlined,
+  AimOutlined,
+} from '@ant-design/icons';
+import { closestCenter, DndContext, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import type { DragEndEvent } from '@dnd-kit/core';
-import { arrayMove, SortableContext, horizontalListSortingStrategy, useSortable } from '@dnd-kit/sortable';
+import { arrayMove, horizontalListSortingStrategy, SortableContext, useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-
-// Resizable
 import { Resizable } from 'react-resizable';
 import type { ResizeCallbackData } from 'react-resizable';
 import 'react-resizable/css/styles.css';
 
-const { Content } = Layout;
-const { Title, Text, Paragraph } = Typography;
+import { apiService, type SearchResultItem } from '../api';
+import { useI18n } from '../i18n';
+import { toUserMessage } from '../utils/errors';
+import { buildCsvContent, stripInternalFields } from '../utils/export';
 
+
+const { Content } = Layout;
+const { Paragraph, Text, Title } = Typography;
 const MAX_HISTORY = 20;
 
 interface ColumnConfig {
-    visibleColumns: string[];
-    columnOrder: string[];
-    columnWidths: Record<string, number>;
+  visibleColumns: string[];
+  columnOrder: string[];
+  columnWidths: Record<string, number>;
 }
 
-// 帮助内容
-const HelpContent = () => (
-    <div style={{ maxWidth: 350 }}>
-        <Paragraph strong>查询语法</Paragraph>
-        <ul style={{ paddingLeft: 20, margin: 0 }}>
-            <li><Text code>key:value</Text> — 精确匹配</li>
-            <li><Text code>key~value</Text> — 模糊匹配</li>
-            <li><Text code>has:key</Text> — 存在性匹配</li>
-        </ul>
-        <Divider style={{ margin: '8px 0' }} />
-        <Paragraph strong>逻辑运算符</Paragraph>
-        <ul style={{ paddingLeft: 20, margin: 0 }}>
-            <li><Text code>AND</Text> — 且（同时满足）</li>
-            <li><Text code>OR</Text> — 或（满足其一）</li>
-        </ul>
-        <Divider style={{ margin: '8px 0' }} />
-        <Text type="secondary">示例: <Text code>has:date AND status:done</Text></Text>
-    </div>
-);
-
-// 可拖拽的表头单元格
 interface DragHandleProps {
-    id: string;
-    children: React.ReactNode;
+  id: string;
+  children: React.ReactNode;
 }
+
+interface ResizableTitleProps extends React.ThHTMLAttributes<HTMLTableCellElement> {
+  onResize?: (event: React.SyntheticEvent<Element>, data: ResizeCallbackData) => void;
+  width?: number;
+}
+
+const DEFAULT_COLUMN_PRIORITY = ['page', 'block_path', 'line_start', 'line_end', 'block_content', 'file_path'];
 
 const DragHandle: React.FC<DragHandleProps> = ({ id, children }) => {
-    const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
 
-    const style: React.CSSProperties = {
+  return (
+    <span
+      ref={setNodeRef}
+      style={{
         transform: CSS.Transform.toString(transform),
         transition,
         opacity: isDragging ? 0.5 : 1,
-    };
-
-    return (
-        <span ref={setNodeRef} style={style}>
-            <span {...attributes} {...listeners} style={{ cursor: 'grab', marginRight: 4 }}>
-                <HolderOutlined style={{ color: '#999' }} />
-            </span>
-            {children}
-        </span>
-    );
+      }}
+    >
+      <span {...attributes} {...listeners} style={{ cursor: 'grab', marginRight: 4 }}>
+        <HolderOutlined style={{ color: '#999' }} />
+      </span>
+      {children}
+    </span>
+  );
 };
 
-// 可调整宽度的表头
-const ResizableTitle = (props: any) => {
-    const { onResize, width, ...restProps } = props;
+const ResizableTitle: React.FC<ResizableTitleProps> = ({ onResize, width, ...restProps }) => {
+  if (!width || !onResize) {
+    return <th {...restProps} />;
+  }
 
-    if (!width) {
-        return <th {...restProps} />;
-    }
-
-    return (
-        <Resizable
-            width={width}
-            height={0}
-            handle={
-                <span
-                    className="custom-resize-handle"
-                    onClick={(e) => {
-                        e.stopPropagation();
-                        e.preventDefault();
-                    }}
-                    onMouseDown={(e) => e.stopPropagation()}
-                />
-            }
-            onResize={onResize}
-            draggableOpts={{ enableUserSelectHack: false }}
-        >
-            <th {...restProps} style={{ ...restProps.style, position: 'relative' }} />
-        </Resizable>
-    );
+  return (
+    <Resizable
+      width={width}
+      height={0}
+      handle={
+        <span
+          className="custom-resize-handle"
+          onClick={(event) => {
+            event.stopPropagation();
+            event.preventDefault();
+          }}
+          onMouseDown={(event) => event.stopPropagation()}
+        />
+      }
+      onResize={onResize}
+      draggableOpts={{ enableUserSelectHack: false }}
+    >
+      <th {...restProps} style={{ ...restProps.style, position: 'relative' }} />
+    </Resizable>
+  );
 };
+
+function orderColumns(columns: string[]): string[] {
+  const base = DEFAULT_COLUMN_PRIORITY.filter((item) => columns.includes(item));
+  const remaining = columns
+    .filter((item) => !base.includes(item))
+    .sort((left, right) => left.localeCompare(right));
+  return [...base, ...remaining];
+}
+
 
 const QueryPage: React.FC = () => {
-    const [query, setQuery] = useState<string>('');
-    const [rowData, setRowData] = useState<SearchResultItem[]>([]);
-    const [loading, setLoading] = useState<boolean>(false);
-    const [allColumns, setAllColumns] = useState<string[]>([]);
-    const [visibleColumns, setVisibleColumns] = useState<string[]>([]);
-    const [columnOrder, setColumnOrder] = useState<string[]>([]);
-    const [columnWidths, setColumnWidths] = useState<Record<string, number>>({});
-    const [columnModalOpen, setColumnModalOpen] = useState<boolean>(false);
-    const [queryHistory, setQueryHistory] = useState<string[]>([]);
-    const [lastQuery, setLastQuery] = useState<string>('');
-    const [globalHiddenCols, setGlobalHiddenCols] = useState<string[]>([]);
-    const [graphName, setGraphName] = useState<string>('main');
+  const { t } = useI18n();
+  const [query, setQuery] = useState('');
+  const [caseSensitive, setCaseSensitive] = useState(false);
+  const [rowData, setRowData] = useState<SearchResultItem[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [allColumns, setAllColumns] = useState<string[]>([]);
+  const [visibleColumns, setVisibleColumns] = useState<string[]>([]);
+  const [columnOrder, setColumnOrder] = useState<string[]>([]);
+  const [columnWidths, setColumnWidths] = useState<Record<string, number>>({});
+  const [columnModalOpen, setColumnModalOpen] = useState(false);
+  const [queryHistory, setQueryHistory] = useState<string[]>([]);
+  const [lastQuery, setLastQuery] = useState('');
+  const [globalHiddenCols, setGlobalHiddenCols] = useState<string[]>([]);
+  const [graphName, setGraphName] = useState('main');
+  const [exportModalOpen, setExportModalOpen] = useState(false);
+  const [exportFormat, setExportFormat] = useState<'json' | 'csv'>('json');
 
-    // 导出对话框
-    const [exportModalOpen, setExportModalOpen] = useState<boolean>(false);
-    const [exportFormat, setExportFormat] = useState<'json' | 'csv'>('json');
+  const columnConfigsRef = useRef<Record<string, ColumnConfig>>({});
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
 
-    // DnD sensors
-    const sensors = useSensors(
-        useSensor(PointerSensor, { activationConstraint: { distance: 5 } })
-    );
+  useEffect(() => {
+    apiService
+      .getPreferences()
+      .then((preferences) => {
+        setQueryHistory(Array.isArray(preferences.query_history) ? preferences.query_history : []);
+        setGlobalHiddenCols(
+          Array.isArray(preferences.global_hidden_columns) ? preferences.global_hidden_columns : [],
+        );
+        setCaseSensitive(Boolean(preferences.query_case_sensitive));
+        if (preferences.column_configs && typeof preferences.column_configs === 'object') {
+          columnConfigsRef.current = preferences.column_configs as Record<string, ColumnConfig>;
+        }
+        if (preferences.graph_name) {
+          setGraphName(preferences.graph_name);
+        }
+      })
+      .catch(() => {
+        // Preference hydration should not block query usage.
+      });
+  }, []);
 
-    // 列配置引用
-    const columnConfigsRef = React.useRef<Record<string, ColumnConfig>>({});
+  const saveToHistory = useCallback((nextQuery: string) => {
+    const trimmed = nextQuery.trim();
+    if (!trimmed) {
+      return;
+    }
+    setQueryHistory((previous) => {
+      const history = [trimmed, ...previous.filter((item) => item !== trimmed)].slice(0, MAX_HISTORY);
+      apiService.saveQueryHistory(history).catch(() => {
+        // History persistence is best-effort.
+      });
+      return history;
+    });
+  }, []);
 
-    // 从后端加载用户偏好
-    useEffect(() => {
-        const loadPreferences = async () => {
-            try {
-                const prefs = await apiService.getPreferences();
-                if (prefs.query_history && Array.isArray(prefs.query_history)) {
-                    setQueryHistory(prefs.query_history);
-                }
-                if (prefs.global_hidden_columns && Array.isArray(prefs.global_hidden_columns)) {
-                    setGlobalHiddenCols(prefs.global_hidden_columns);
-                }
-                if (prefs.column_configs) {
-                    columnConfigsRef.current = prefs.column_configs;
-                }
-                if (prefs.graph_name) {
-                    setGraphName(prefs.graph_name);
-                }
-            } catch (e) {
-                console.error('Failed to load preferences:', e);
-            }
-        };
-        loadPreferences();
-    }, []);
+  const clearHistory = () => {
+    setQueryHistory([]);
+    apiService
+      .saveQueryHistory([])
+      .then(() => {
+        message.success(t('query.clearHistorySuccess'));
+      })
+      .catch((error) => {
+        message.error(toUserMessage(error, t('common.error')));
+      });
+  };
 
-    const saveToHistory = useCallback((q: string) => {
-        const trimmed = q.trim();
-        if (!trimmed) return;
+  const saveGlobalHiddenCols = (columns: string[]) => {
+    setGlobalHiddenCols(columns);
+    apiService.saveGlobalHiddenColumns(columns).catch(() => {
+      // Global column visibility is best-effort persistence.
+    });
+  };
 
-        setQueryHistory(prev => {
-            const newHistory = [trimmed, ...prev.filter(h => h !== trimmed)].slice(0, MAX_HISTORY);
-            apiService.saveQueryHistory(newHistory).catch(e => console.error('Failed to save history:', e));
-            return newHistory;
+  const saveColumnConfig = useCallback((queryKey: string, config: ColumnConfig) => {
+    columnConfigsRef.current[queryKey] = config;
+    apiService.saveColumnConfig(queryKey, config).catch(() => {
+      // Column layout persistence should not interrupt the table workflow.
+    });
+  }, []);
+
+  const loadColumnConfig = useCallback((queryKey: string, defaultColumns: string[]): ColumnConfig => {
+    const saved = columnConfigsRef.current[queryKey];
+    if (!saved) {
+      return {
+        visibleColumns: defaultColumns,
+        columnOrder: defaultColumns,
+        columnWidths: {},
+      };
+    }
+
+    const validVisible = (saved.visibleColumns || []).filter((column) => defaultColumns.includes(column));
+    const validOrder = (saved.columnOrder || []).filter((column) => defaultColumns.includes(column));
+    const missingColumns = defaultColumns.filter((column) => !validOrder.includes(column));
+
+    return {
+      visibleColumns: validVisible.length > 0 ? validVisible : defaultColumns,
+      columnOrder: [...validOrder, ...missingColumns],
+      columnWidths: saved.columnWidths || {},
+    };
+  }, []);
+
+  const getColumnLabel = useCallback(
+    (column: string) => {
+      const columnLabels: Record<string, string> = {
+        page: t('query.page'),
+        block_path: t('query.blockPath'),
+        line_start: t('query.lineStart'),
+        line_end: t('query.lineEnd'),
+        block_content: t('query.blockContent'),
+        file_path: t('query.filePath'),
+      };
+      return columnLabels[column] || column;
+    },
+    [t],
+  );
+
+  const handlePageClick = useCallback(
+    (pageName: string) => {
+      const url = `logseq://graph/${encodeURIComponent(graphName)}?page=${encodeURIComponent(pageName)}`;
+      window.open(url, '_blank');
+    },
+    [graphName],
+  );
+
+  const handleLocateBlock = useCallback(
+    (record: SearchResultItem) => {
+      handlePageClick(record.page);
+      message.info(
+        t('query.locateFallback', {
+          line: record.line_start ?? '-',
+        }),
+      );
+    },
+    [handlePageClick, t],
+  );
+
+  const handleCopy = useCallback(
+    async (value: unknown) => {
+      await navigator.clipboard.writeText(String(value ?? ''));
+      message.success(t('query.copySuccess'));
+    },
+    [t],
+  );
+
+  const handleSearch = async () => {
+    const trimmed = query.trim();
+    if (!trimmed) {
+      message.warning(t('query.empty'));
+      return;
+    }
+
+    setLoading(true);
+    saveToHistory(trimmed);
+    setLastQuery(trimmed);
+
+    try {
+      const response = await apiService.search(trimmed, undefined, caseSensitive);
+      const results = response.results || [];
+      setRowData(results);
+
+      if (results.length === 0) {
+        setAllColumns([]);
+        setVisibleColumns([]);
+        setColumnOrder([]);
+        message.success(t('query.searchSuccess', { count: response.count }));
+        return;
+      }
+
+      const keys = new Set<string>();
+      results.forEach((item) => {
+        Object.keys(item).forEach((key) => {
+          if (!['id', 'content', 'properties'].includes(key)) {
+            keys.add(key);
+          }
         });
-    }, []);
+      });
 
-    const clearHistory = () => {
-        setQueryHistory([]);
-        apiService.saveQueryHistory([]).then(() => {
-            message.success('历史记录已清空');
-        }).catch(e => console.error('Failed to clear history:', e));
-    };
+      const sortedColumns = orderColumns(Array.from(keys));
+      const savedConfig = loadColumnConfig(trimmed, sortedColumns);
+      setAllColumns(sortedColumns);
+      setVisibleColumns(savedConfig.visibleColumns);
+      setColumnOrder(savedConfig.columnOrder);
+      setColumnWidths(savedConfig.columnWidths);
+      message.success(t('query.searchSuccess', { count: response.count }));
+    } catch (error) {
+      message.error(toUserMessage(error, t('query.searchError')));
+    } finally {
+      setLoading(false);
+    }
+  };
 
-    const saveGlobalHiddenCols = (cols: string[]) => {
-        setGlobalHiddenCols(cols);
-        apiService.saveGlobalHiddenColumns(cols).catch(e => console.error('Failed to save global hidden cols:', e));
-    };
+  const toggleCaseSensitive = useCallback(() => {
+    setCaseSensitive((previous) => {
+      const next = !previous;
+      apiService.saveQueryCaseSensitive(next).catch(() => {
+        // Search preference persistence is best-effort.
+      });
+      return next;
+    });
+  }, []);
 
-    const saveColumnConfig = useCallback((queryKey: string, config: ColumnConfig) => {
-        columnConfigsRef.current[queryKey] = config;
-        apiService.saveColumnConfig(queryKey, config).catch(e => console.error('Failed to save column config:', e));
-    }, []);
+  const handleCaseSensitiveKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLSpanElement>) => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        toggleCaseSensitive();
+      }
+    },
+    [toggleCaseSensitive],
+  );
 
-    const loadColumnConfig = (queryKey: string, defaultCols: string[]): ColumnConfig => {
-        const saved = columnConfigsRef.current[queryKey];
-        if (saved) {
-            const validVisible = (saved.visibleColumns || []).filter(c => defaultCols.includes(c));
-            const validOrder = (saved.columnOrder || []).filter(c => defaultCols.includes(c));
-            const newCols = defaultCols.filter(c => !validOrder.includes(c));
-            return {
-                visibleColumns: validVisible.length > 0 ? validVisible : defaultCols,
-                columnOrder: [...validOrder, ...newCols],
-                columnWidths: saved.columnWidths || {}
-            };
-        }
-        return { visibleColumns: defaultCols, columnOrder: defaultCols, columnWidths: {} };
-    };
+  const applyColumnConfig = () => {
+    setColumnModalOpen(false);
+    if (lastQuery) {
+      saveColumnConfig(lastQuery, { visibleColumns, columnOrder, columnWidths });
+    }
+    message.success(t('query.columnsSaved'));
+  };
 
-    const handleSearch = async () => {
-        if (!query.trim()) { message.warning('请输入查询语句'); return; }
-        setLoading(true);
-        saveToHistory(query);
-        try {
-            const res = await apiService.search(query);
+  const moveColumn = (index: number, direction: 'up' | 'down') => {
+    const nextOrder = [...columnOrder];
+    const targetIndex = direction === 'up' ? index - 1 : index + 1;
+    if (targetIndex < 0 || targetIndex >= nextOrder.length) {
+      return;
+    }
+    [nextOrder[index], nextOrder[targetIndex]] = [nextOrder[targetIndex], nextOrder[index]];
+    setColumnOrder(nextOrder);
+  };
 
-            if (res.results && res.results.length > 0) {
-                const keys = new Set<string>();
-                res.results.forEach(item => { Object.keys(item).forEach(k => keys.add(k)); });
-                keys.delete('id'); keys.delete('_missing');
-                const colList = Array.from(keys);
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) {
+      return;
+    }
+    const orderedVisible = columnOrder.filter((column) => visibleColumns.includes(column));
+    const oldIndex = orderedVisible.indexOf(String(active.id));
+    const newIndex = orderedVisible.indexOf(String(over.id));
+    if (oldIndex === -1 || newIndex === -1) {
+      return;
+    }
+    const nextVisibleOrder = arrayMove(orderedVisible, oldIndex, newIndex);
+    const hiddenColumns = columnOrder.filter((column) => !visibleColumns.includes(column));
+    const nextOrder = [...nextVisibleOrder, ...hiddenColumns];
+    setColumnOrder(nextOrder);
+    if (lastQuery) {
+      saveColumnConfig(lastQuery, { visibleColumns, columnOrder: nextOrder, columnWidths });
+    }
+  };
 
-                const sortedCols = colList.includes('page')
-                    ? ['page', ...colList.filter(c => c !== 'page')]
-                    : colList;
+  const handleColumnResize = useCallback(
+    (column: string) => (_event: React.SyntheticEvent<Element>, data: ResizeCallbackData) => {
+      const nextWidths = { ...columnWidths, [column]: data.size.width };
+      setColumnWidths(nextWidths);
+      if (lastQuery) {
+        saveColumnConfig(lastQuery, { visibleColumns, columnOrder, columnWidths: nextWidths });
+      }
+    },
+    [columnOrder, columnWidths, lastQuery, saveColumnConfig, visibleColumns],
+  );
 
-                setAllColumns(sortedCols);
-                const savedConfig = loadColumnConfig(query.trim(), sortedCols);
-                setVisibleColumns(savedConfig.visibleColumns);
-                setColumnOrder(savedConfig.columnOrder);
-                setColumnWidths(savedConfig.columnWidths);
-                setLastQuery(query.trim());
-            }
-            setRowData(res.results || []);
-            message.success(`找到 ${res.count} 条结果`);
-        } catch (err) {
-            console.error(err);
-            message.error('查询失败');
-        } finally {
-            setLoading(false);
-        }
-    };
+  const handleExport = () => {
+    const cleanRows = stripInternalFields(rowData);
+    const headers = orderedVisibleColumns;
 
-    const handleHistorySelect = (value: string) => { setQuery(value); };
+    let blob: Blob;
+    let extension: 'json' | 'csv';
+    if (exportFormat === 'json') {
+      blob = new Blob([JSON.stringify(cleanRows, null, 2)], { type: 'application/json' });
+      extension = 'json';
+    } else {
+      blob = new Blob([buildCsvContent(cleanRows, headers)], {
+        type: 'text/csv;charset=utf-8;',
+      });
+      extension = 'csv';
+    }
 
-    const applyColumnConfig = () => {
-        setColumnModalOpen(false);
-        if (lastQuery) {
-            saveColumnConfig(lastQuery, { visibleColumns, columnOrder, columnWidths });
-        }
-        message.success('列设置已保存');
-    };
-
-    const moveColumn = (index: number, direction: 'up' | 'down') => {
-        const newOrder = [...columnOrder];
-        const targetIndex = direction === 'up' ? index - 1 : index + 1;
-        if (targetIndex < 0 || targetIndex >= newOrder.length) return;
-        [newOrder[index], newOrder[targetIndex]] = [newOrder[targetIndex], newOrder[index]];
-        setColumnOrder(newOrder);
-    };
-
-    const handleDragEnd = (event: DragEndEvent) => {
-        const { active, over } = event;
-        if (over && active.id !== over.id) {
-            const orderedVisible = columnOrder.filter(c => visibleColumns.includes(c));
-            const oldIndex = orderedVisible.indexOf(active.id as string);
-            const newIndex = orderedVisible.indexOf(over.id as string);
-
-            if (oldIndex !== -1 && newIndex !== -1) {
-                const newOrderedVisible = arrayMove(orderedVisible, oldIndex, newIndex);
-                const hiddenCols = columnOrder.filter(c => !visibleColumns.includes(c));
-                const newColumnOrder = [...newOrderedVisible, ...hiddenCols];
-                setColumnOrder(newColumnOrder);
-
-                if (lastQuery) {
-                    saveColumnConfig(lastQuery, { visibleColumns, columnOrder: newColumnOrder, columnWidths });
-                }
-            }
-        }
-    };
-
-    const handleColumnResize = (col: string) => (_e: React.SyntheticEvent, data: ResizeCallbackData) => {
-        const newWidths = { ...columnWidths, [col]: data.size.width };
-        setColumnWidths(newWidths);
-        if (lastQuery) {
-            saveColumnConfig(lastQuery, { visibleColumns, columnOrder, columnWidths: newWidths });
-        }
-    };
-
-    const handlePageClick = (pageName: string) => {
-        const url = `logseq://graph/${encodeURIComponent(graphName)}?page=${encodeURIComponent(pageName)}`;
-        window.open(url, '_blank');
-        message.info(`正在打开 Logseq: ${pageName} (${graphName})`);
-    };
-
-    const handleCopy = (text: string) => {
-        navigator.clipboard.writeText(text);
-        message.success('已复制');
-    };
-
-    const handleExportClick = () => {
-        if (rowData.length === 0) { message.warning('没有数据可导出'); return; }
-        setExportModalOpen(true);
-    };
-
-    const doExport = () => {
-        const cleanData = rowData.map((row: any) => {
-            const { id, _missing, ...rest } = row;
-            return rest;
-        });
-
-        let content: string;
-        let mimeType: string;
-        let ext: string;
-
-        if (exportFormat === 'json') {
-            content = JSON.stringify(cleanData, null, 2);
-            mimeType = 'application/json';
-            ext = 'json';
-        } else {
-            const headers = orderedVisibleColumns;
-            const csvRows = [headers.join(',')];
-            cleanData.forEach((row: any) => {
-                const values = headers.map((h: string) => {
-                    const val = String(row[h] || '').replace(/"/g, '""');
-                    return `"${val}"`;
-                });
-                csvRows.push(values.join(','));
-            });
-            content = csvRows.join('\n');
-            mimeType = 'text/csv';
-            ext = 'csv';
-        }
-
-        const blob = new Blob([content], { type: mimeType });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `logseq_export_${new Date().toISOString().slice(0, 10)}.${ext}`;
-        a.click();
-        URL.revokeObjectURL(url);
-
-        setExportModalOpen(false);
-        message.success(`已导出 ${cleanData.length} 条数据为 ${ext.toUpperCase()}`);
-    };
-
-    const orderedVisibleColumns = useMemo(() =>
-        columnOrder.filter(c => visibleColumns.includes(c) && !globalHiddenCols.includes(c)),
-        [columnOrder, visibleColumns, globalHiddenCols]
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `property-query-${new Date().toISOString().slice(0, 10)}.${extension}`;
+    link.click();
+    URL.revokeObjectURL(url);
+    setExportModalOpen(false);
+    message.success(
+      t('query.exportDone', {
+        count: cleanRows.length,
+        format: extension.toUpperCase(),
+      }),
     );
+  };
 
-    const tableColumns: ColumnsType<SearchResultItem> = useMemo(() => {
-        return orderedVisibleColumns.map(col => ({
-            title: <DragHandle id={col}>{col}</DragHandle>,
-            dataIndex: col,
-            key: col,
-            width: columnWidths[col] || (col === 'page' ? 200 : 150),
-            sorter: (a: any, b: any) => String(a[col] || '').localeCompare(String(b[col] || '')),
-            render: (text: any) => {
-                if (col === 'page') {
-                    return (
-                        <Tooltip title="点击在 Logseq 中打开">
-                            <a onClick={() => handlePageClick(text)} style={{ cursor: 'pointer' }}>{text}</a>
-                        </Tooltip>
-                    );
-                }
-                return (
-                    <Tooltip title="双击复制">
-                        <span
-                            onDoubleClick={() => handleCopy(String(text || ''))}
-                            style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}
-                        >
-                            {String(text || '')}
-                        </span>
-                    </Tooltip>
-                );
-            },
-            onHeaderCell: (column: any) => ({
-                width: column.width,
-                onResize: handleColumnResize(col),
-            }),
-        }));
-    }, [orderedVisibleColumns, columnWidths, lastQuery]);
+  const orderedVisibleColumns = useMemo(
+    () => columnOrder.filter((column) => visibleColumns.includes(column) && !globalHiddenCols.includes(column)),
+    [columnOrder, visibleColumns, globalHiddenCols],
+  );
 
-    const components = {
-        header: {
-            cell: ResizableTitle,
-        },
-    };
+  const tableColumns: ColumnsType<SearchResultItem> = useMemo(() => {
+    return orderedVisibleColumns.map((column) => ({
+      title: <DragHandle id={column}>{getColumnLabel(column)}</DragHandle>,
+      dataIndex: column,
+      key: column,
+      width: columnWidths[column] || (column === 'page' ? 240 : column === 'block_content' ? 320 : 170),
+      sorter: (left, right) => String(left[column] ?? '').localeCompare(String(right[column] ?? '')),
+      render: (value: unknown, record) => {
+        if (column === 'page') {
+          return (
+            <Space size="small">
+              <Tooltip title={t('query.pageHint')}>
+                <a onClick={() => handlePageClick(record.page)} style={{ cursor: 'pointer' }}>
+                  {record.page}
+                </a>
+              </Tooltip>
+              <Tooltip title={t('query.locateHint')}>
+                <Button
+                  size="small"
+                  icon={<AimOutlined />}
+                  onClick={() => handleLocateBlock(record)}
+                />
+              </Tooltip>
+            </Space>
+          );
+        }
+        return (
+          <Tooltip title={t('query.doubleCopy')}>
+            <span
+              onDoubleClick={() => {
+                void handleCopy(value);
+              }}
+              style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}
+            >
+              {String(value ?? '')}
+            </span>
+          </Tooltip>
+        );
+      },
+      onHeaderCell: () => ({
+        width: columnWidths[column] || 150,
+        onResize: handleColumnResize(column),
+      }),
+    }));
+  }, [
+    columnWidths,
+    getColumnLabel,
+    handleColumnResize,
+    handleCopy,
+    handleLocateBlock,
+    handlePageClick,
+    orderedVisibleColumns,
+    t,
+  ]);
 
-    return (
-        <Layout className="h-full bg-white">
-            <Content style={{ padding: '24px', display: 'flex', flexDirection: 'column', height: '100%' }}>
-                <div style={{ marginBottom: 16, flexShrink: 0 }}>
-                    <Space align="center">
-                        <Title level={4} style={{ margin: 0 }}>高级属性查询</Title>
-                        <Popover content={<HelpContent />} title="查询帮助" trigger="click" placement="bottomLeft">
-                            <QuestionCircleOutlined style={{ fontSize: 18, color: '#1890ff', cursor: 'pointer' }} />
-                        </Popover>
-                    </Space>
-                    <div style={{ marginTop: 12 }}>
-                        <Space wrap>
-                            <Input
-                                placeholder="输入查询 (如: has:date)"
-                                value={query}
-                                onChange={e => setQuery(e.target.value)}
-                                onPressEnter={handleSearch}
-                                style={{ width: 350 }}
-                                allowClear
-                            />
-                            <Space.Compact>
-                                <Select
-                                    placeholder="历史记录"
-                                    style={{ width: 180 }}
-                                    options={queryHistory.map(h => ({ value: h, label: h }))}
-                                    onChange={handleHistorySelect}
-                                    allowClear
-                                    suffixIcon={<HistoryOutlined />}
-                                    value={undefined}
-                                />
-                                <Tooltip title="清空历史记录">
-                                    <Button
-                                        icon={<DeleteOutlined />}
-                                        onClick={clearHistory}
-                                        disabled={queryHistory.length === 0}
-                                    />
-                                </Tooltip>
-                            </Space.Compact>
-                            <Button type="primary" icon={<SearchOutlined />} loading={loading} onClick={handleSearch}>搜索</Button>
-                            <Button icon={<SettingOutlined />} onClick={() => setColumnModalOpen(true)} disabled={allColumns.length === 0}>列管理</Button>
-                            <Button icon={<ExportOutlined />} onClick={handleExportClick} disabled={rowData.length === 0}>导出</Button>
-                        </Space>
-                    </div>
-                </div>
+  const helpContent = (
+    <div style={{ maxWidth: 360 }}>
+      <Paragraph strong>{t('query.helpSyntax')}</Paragraph>
+      <ul style={{ paddingLeft: 20, margin: 0 }}>
+        <li>
+          <Text code>key:value</Text> - <Text strong>{t('query.helpExactMode')}</Text>：{t('query.helpExact')}
+        </li>
+        <li>
+          <Text code>key~value</Text> - <Text strong>{t('query.helpFuzzyMode')}</Text>：{t('query.helpFuzzy')}
+        </li>
+        <li>
+          <Text code>has:key</Text> - <Text strong>{t('query.helpHasMode')}</Text>：{t('query.helpHas')}
+        </li>
+        <li>
+          <Text code>text</Text> - <Text strong>{t('query.helpTextMode')}</Text>：{t('query.helpText')}
+        </li>
+      </ul>
+      <Divider style={{ margin: '8px 0' }} />
+      <Paragraph strong>{t('query.helpLogic')}</Paragraph>
+      <ul style={{ paddingLeft: 20, margin: 0 }}>
+        <li>
+          <Text code>AND</Text> - {t('query.helpAnd')}
+        </li>
+        <li>
+          <Text code>OR</Text> - {t('query.helpOr')}
+        </li>
+      </ul>
+      <Divider style={{ margin: '8px 0' }} />
+      <Paragraph strong style={{ marginBottom: 8 }}>
+        {t('query.helpExample')}
+      </Paragraph>
+      <ul style={{ paddingLeft: 20, margin: 0 }}>
+        <li>
+          <Text code>has:ai-提示词</Text>
+        </li>
+        <li>
+          <Text code>ai-提示词~提示词-书籍总结</Text>
+        </li>
+        <li>
+          <Text code>has:时间戳 AND 案例-观察~观察-开盘</Text>
+        </li>
+      </ul>
+    </div>
+  );
 
-                <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
-                    <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-                        <SortableContext items={orderedVisibleColumns} strategy={horizontalListSortingStrategy}>
-                            <Table
-                                dataSource={rowData}
-                                columns={tableColumns}
-                                components={components}
-                                rowKey={(record, index) => `${record.page || ''}_${index}`}
-                                loading={loading}
-                                size="small"
-                                scroll={{ x: 'max-content' }}
-                                bordered
-                                pagination={{
-                                    defaultPageSize: 50,
-                                    showSizeChanger: true,
-                                    showTotal: (total) => `共 ${total} 条`,
-                                    pageSizeOptions: ['20', '50', '100', '200']
-                                }}
-                                rowClassName={(record) => record._missing ? 'row-missing' : ''}
-                            />
-                        </SortableContext>
-                    </DndContext>
-                </div>
+  const caseSensitiveSuffix = (
+    <Tooltip
+      title={t('query.caseSensitiveTooltip', {
+        state: caseSensitive ? t('common.on') : t('common.off'),
+      })}
+    >
+      <span
+        role="button"
+        aria-label={t('query.caseSensitive')}
+        aria-pressed={caseSensitive}
+        tabIndex={0}
+        onClick={toggleCaseSensitive}
+        onKeyDown={handleCaseSensitiveKeyDown}
+        style={{
+          cursor: 'pointer',
+          userSelect: 'none',
+          fontSize: 12,
+          fontWeight: 700,
+          lineHeight: '18px',
+          padding: '1px 6px',
+          borderRadius: 4,
+          color: caseSensitive ? '#1677ff' : 'rgba(0, 0, 0, 0.45)',
+          backgroundColor: caseSensitive ? 'rgba(22, 119, 255, 0.12)' : 'transparent',
+          border: caseSensitive ? '1px solid rgba(22, 119, 255, 0.25)' : '1px solid transparent',
+        }}
+      >
+        Aa
+      </span>
+    </Tooltip>
+  );
 
-                <div style={{ marginTop: 8, color: '#999', fontSize: 12, flexShrink: 0 }}>
-                    <LinkOutlined /> 拖拽列头图标 ⋮⋮ 调整顺序 | 拖拽列边框调整宽度 | 点击 Page 跳转 Logseq | 双击复制
-                </div>
+  return (
+    <Layout className="h-full bg-white">
+      <Content style={{ padding: '24px', display: 'flex', flexDirection: 'column', height: '100%' }}>
+        <div style={{ marginBottom: 16, flexShrink: 0 }}>
+          <Space align="center">
+            <Title level={4} style={{ margin: 0 }}>
+              {t('query.title')}
+            </Title>
+            <Popover content={helpContent} title={t('query.helpTitle')} trigger="click" placement="bottomLeft">
+              <span role="button" aria-label={t('query.helpTitle')} style={{ display: 'inline-flex' }}>
+                <QuestionCircleOutlined style={{ fontSize: 18, color: '#1890ff', cursor: 'pointer' }} />
+              </span>
+            </Popover>
+          </Space>
+          <div style={{ marginTop: 12 }}>
+            <Space wrap>
+              <Input
+                placeholder={t('query.placeholder')}
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                onPressEnter={handleSearch}
+                style={{ width: 430 }}
+                allowClear
+                suffix={caseSensitiveSuffix}
+              />
+              <Space.Compact>
+                <Select
+                  placeholder={t('query.history')}
+                  style={{ width: 210 }}
+                  options={queryHistory.map((item) => ({ value: item, label: item }))}
+                  onChange={(value) => setQuery(value ?? '')}
+                  allowClear
+                  suffixIcon={<HistoryOutlined />}
+                  value={undefined}
+                />
+                <Tooltip title={t('query.clearHistory')}>
+                  <Button
+                    icon={<DeleteOutlined />}
+                    onClick={clearHistory}
+                    disabled={queryHistory.length === 0}
+                  />
+                </Tooltip>
+              </Space.Compact>
+              <Button type="primary" icon={<SearchOutlined />} loading={loading} onClick={handleSearch}>
+                {t('common.search')}
+              </Button>
+              <Button
+                icon={<SettingOutlined />}
+                onClick={() => setColumnModalOpen(true)}
+                disabled={allColumns.length === 0}
+              >
+                {t('query.columnManage')}
+              </Button>
+              <Button
+                icon={<ExportOutlined />}
+                onClick={() => setExportModalOpen(true)}
+                disabled={rowData.length === 0}
+              >
+                {t('query.exportData')}
+              </Button>
+            </Space>
+          </div>
+        </div>
 
-                <Modal
-                    title="列管理（调整显示与顺序）"
-                    open={columnModalOpen}
-                    onOk={applyColumnConfig}
-                    onCancel={() => setColumnModalOpen(false)}
-                    okText="保存"
-                    cancelText="取消"
-                    width={550}
+        <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
+          <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+            <SortableContext items={orderedVisibleColumns} strategy={horizontalListSortingStrategy}>
+              <Table
+                dataSource={rowData}
+                columns={tableColumns}
+                components={{ header: { cell: ResizableTitle } }}
+                rowKey="id"
+                loading={loading}
+                size="small"
+                scroll={{ x: 'max-content' }}
+                bordered
+                locale={{ emptyText: t('query.noResults') }}
+                pagination={{
+                  defaultPageSize: 50,
+                  showSizeChanger: true,
+                  showTotal: (total) => `${t('common.results')}: ${total}`,
+                  pageSizeOptions: ['20', '50', '100', '200'],
+                }}
+              />
+            </SortableContext>
+          </DndContext>
+        </div>
+
+        <div style={{ marginTop: 8, color: '#999', fontSize: 12, flexShrink: 0 }}>
+          {t('query.queryHelpText')} {t('query.caseSensitiveHint')}
+        </div>
+
+        <Modal
+          title={t('query.columnManage')}
+          open={columnModalOpen}
+          onOk={applyColumnConfig}
+          onCancel={() => setColumnModalOpen(false)}
+          okText={t('common.save')}
+          cancelText={t('common.cancel')}
+          width={560}
+        >
+          <div style={{ marginBottom: 8 }}>
+            <Button size="small" onClick={() => setVisibleColumns([...allColumns])}>
+              {t('query.selectAll')}
+            </Button>
+            <Button size="small" onClick={() => setVisibleColumns([])} style={{ marginLeft: 8 }}>
+              {t('query.selectNone')}
+            </Button>
+            <Button size="small" onClick={() => setColumnOrder([...allColumns])} style={{ marginLeft: 8 }}>
+              {t('query.resetOrder')}
+            </Button>
+          </div>
+          <Divider style={{ margin: '8px 0' }} />
+          <Text type="secondary" style={{ fontSize: 12, marginBottom: 8, display: 'block' }}>
+            {t('query.globalHideHint')}
+          </Text>
+          <List
+            size="small"
+            bordered
+            dataSource={columnOrder}
+            style={{ maxHeight: 350, overflowY: 'auto' }}
+            renderItem={(column, index) => (
+              <List.Item
+                style={{
+                  padding: '8px 12px',
+                  backgroundColor:
+                    visibleColumns.includes(column) && !globalHiddenCols.includes(column) ? '#fff' : '#f5f5f5',
+                }}
+                actions={[
+                  <Tooltip key={`${column}-global`} title={t('query.globalHide')}>
+                    <Checkbox
+                      checked={globalHiddenCols.includes(column)}
+                      onChange={(event) => {
+                        if (event.target.checked) {
+                          saveGlobalHiddenCols([...globalHiddenCols, column]);
+                        } else {
+                          saveGlobalHiddenCols(globalHiddenCols.filter((item) => item !== column));
+                        }
+                      }}
+                    >
+                      <Text type="secondary" style={{ fontSize: 12 }}>
+                        {t('query.globalHide')}
+                      </Text>
+                    </Checkbox>
+                  </Tooltip>,
+                  <Button
+                    key={`${column}-up`}
+                    size="small"
+                    icon={<UpOutlined />}
+                    disabled={index === 0}
+                    onClick={() => moveColumn(index, 'up')}
+                  />,
+                  <Button
+                    key={`${column}-down`}
+                    size="small"
+                    icon={<DownOutlined />}
+                    disabled={index === columnOrder.length - 1}
+                    onClick={() => moveColumn(index, 'down')}
+                  />,
+                ]}
+              >
+                <Checkbox
+                  checked={visibleColumns.includes(column)}
+                  onChange={(event) => {
+                    if (event.target.checked) {
+                      setVisibleColumns([...visibleColumns, column]);
+                    } else {
+                      setVisibleColumns(visibleColumns.filter((item) => item !== column));
+                    }
+                  }}
                 >
-                    <div style={{ marginBottom: 8 }}>
-                        <Button size="small" onClick={() => setVisibleColumns([...allColumns])}>全选</Button>
-                        <Button size="small" onClick={() => setVisibleColumns([])} style={{ marginLeft: 8 }}>全不选</Button>
-                        <Button size="small" onClick={() => setColumnOrder([...allColumns])} style={{ marginLeft: 8 }}>重置顺序</Button>
-                    </div>
-                    <Divider style={{ margin: '8px 0' }} />
-                    <Text type="secondary" style={{ fontSize: 12, marginBottom: 8, display: 'block' }}>
-                        💡 勾选"全局"将在所有查询中隐藏该列
-                    </Text>
-                    <List
-                        size="small"
-                        bordered
-                        dataSource={columnOrder}
-                        style={{ maxHeight: 350, overflowY: 'auto' }}
-                        renderItem={(col, index) => (
-                            <List.Item
-                                style={{ padding: '8px 12px', backgroundColor: visibleColumns.includes(col) && !globalHiddenCols.includes(col) ? '#fff' : '#f5f5f5' }}
-                                actions={[
-                                    <Tooltip title="全局隐藏">
-                                        <Checkbox
-                                            checked={globalHiddenCols.includes(col)}
-                                            onChange={e => {
-                                                if (e.target.checked) {
-                                                    saveGlobalHiddenCols([...globalHiddenCols, col]);
-                                                } else {
-                                                    saveGlobalHiddenCols(globalHiddenCols.filter(c => c !== col));
-                                                }
-                                            }}
-                                        >
-                                            <Text type="secondary" style={{ fontSize: 12 }}>全局</Text>
-                                        </Checkbox>
-                                    </Tooltip>,
-                                    <Button size="small" icon={<UpOutlined />} disabled={index === 0} onClick={() => moveColumn(index, 'up')} />,
-                                    <Button size="small" icon={<DownOutlined />} disabled={index === columnOrder.length - 1} onClick={() => moveColumn(index, 'down')} />
-                                ]}
-                            >
-                                <Checkbox
-                                    checked={visibleColumns.includes(col)}
-                                    onChange={e => {
-                                        if (e.target.checked) setVisibleColumns([...visibleColumns, col]);
-                                        else setVisibleColumns(visibleColumns.filter(c => c !== col));
-                                    }}
-                                >
-                                    <span style={{ fontWeight: col === 'page' ? 'bold' : 'normal' }}>{col}</span>
-                                </Checkbox>
-                            </List.Item>
-                        )}
-                    />
-                </Modal>
+                  <span style={{ fontWeight: column === 'page' ? 'bold' : 'normal' }}>
+                    {getColumnLabel(column)}
+                  </span>
+                </Checkbox>
+              </List.Item>
+            )}
+          />
+        </Modal>
 
-                <Modal
-                    title="导出数据"
-                    open={exportModalOpen}
-                    onOk={doExport}
-                    onCancel={() => setExportModalOpen(false)}
-                    okText="导出"
-                    cancelText="取消"
-                    width={400}
-                >
-                    <div style={{ marginBottom: 16 }}>
-                        <Text>共 {rowData.length} 条数据</Text>
-                    </div>
-                    <div>
-                        <Text strong>选择导出格式：</Text>
-                        <div style={{ marginTop: 8 }}>
-                            <Radio.Group value={exportFormat} onChange={e => setExportFormat(e.target.value)}>
-                                <Radio value="json">JSON 格式</Radio>
-                                <Radio value="csv">CSV 格式 (Excel 兼容)</Radio>
-                            </Radio.Group>
-                        </div>
-                    </div>
-                </Modal>
-            </Content>
+        <Modal
+          title={t('query.exportData')}
+          open={exportModalOpen}
+          onOk={handleExport}
+          onCancel={() => setExportModalOpen(false)}
+          okText={t('common.export')}
+          cancelText={t('common.cancel')}
+          width={420}
+        >
+          <div style={{ marginBottom: 16 }}>
+            <Text>
+              {t('common.results')}: {rowData.length}
+            </Text>
+          </div>
+          <Text strong>{t('query.exportFormat')}</Text>
+          <div style={{ marginTop: 8 }}>
+            <Radio.Group value={exportFormat} onChange={(event) => setExportFormat(event.target.value)}>
+              <Radio value="json">{t('query.exportJson')}</Radio>
+              <Radio value="csv">{t('query.exportCsv')}</Radio>
+            </Radio.Group>
+          </div>
+        </Modal>
 
-            <style>{`
-                .row-missing { background-color: #ffebee !important; color: #c62828 !important; }
-                .row-missing:hover { background-color: #ffcdd2 !important; }
-                .react-resizable {
-                    position: relative;
-                    background-clip: padding-box;
-                }
-                .custom-resize-handle {
-                    position: absolute;
-                    right: 0;
-                    top: 0;
-                    bottom: 0;
-                    width: 8px;
-                    cursor: col-resize;
-                    z-index: 10;
-                    background: transparent;
-                }
-                .custom-resize-handle:hover {
-                    background: rgba(24, 144, 255, 0.3);
-                }
-                .custom-resize-handle:active {
-                    background: rgba(24, 144, 255, 0.5);
-                }
-                .ant-table-cell {
-                    vertical-align: top;
-                }
-            `}</style>
-        </Layout>
-    );
+        <style>{`
+          .react-resizable {
+            position: relative;
+            background-clip: padding-box;
+          }
+          .custom-resize-handle {
+            position: absolute;
+            right: 0;
+            top: 0;
+            bottom: 0;
+            width: 8px;
+            cursor: col-resize;
+            z-index: 10;
+            background: transparent;
+          }
+          .custom-resize-handle:hover {
+            background: rgba(24, 144, 255, 0.3);
+          }
+          .custom-resize-handle:active {
+            background: rgba(24, 144, 255, 0.5);
+          }
+          .ant-table-cell {
+            vertical-align: top;
+          }
+        `}</style>
+      </Content>
+    </Layout>
+  );
 };
+
 
 export default QueryPage;

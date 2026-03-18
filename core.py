@@ -1,116 +1,217 @@
 # -*- coding: utf-8 -*-
+import concurrent.futures
 import re
 from pathlib import Path
-from typing import List, Dict, Any, Callable
-import concurrent.futures
+from typing import Any, Dict, Iterable, List
 
-def parse_properties(block_content: str) -> Dict[str, str]:
-    """
-    从单个文本块中解析出 Logseq 属性。
 
-    Args:
-        block_content (str): 单个 Logseq 文本块的内容。
+BLOCK_BULLET_PATTERN = re.compile(r"^(?P<indent>\s*)(?:[-*+]|\d+\.)\s+(?P<text>.*)$")
+PROPERTY_PATTERN = re.compile(r"^\s*([^:\n]+?)::\s*(.*)$")
+EXCLUDED_DIR_NAMES = {
+    ".git",
+    ".idea",
+    ".obsidian",
+    ".vscode",
+    "__pycache__",
+    ".venv",
+    "venv",
+    "node_modules",
+    "dist",
+    "build",
+    "frontend",
+}
 
-    Returns:
-        Dict[str, str]: 解析出的属性键值对字典。
-    """
-    properties = {}
-    # 匹配 key:: value 格式
-    pattern = re.compile(r'^\s*(\S+)::\s*(.*)')
-    lines = block_content.split('\n')
-    for line in lines:
-        # 移除行首的任意空白（包括\t）、可选的 "- " 以及更多的空白
-        cleaned_line = re.sub(r'^\s*-\s*', '', line)
-        match = pattern.match(cleaned_line)
-        if match:
-            key, value = match.group(1).strip(), match.group(2).strip()
-            # 确保键和值都存在
-            if key and value:
-                properties[key] = value
-    return properties
 
-def _process_single_file(md_file: Path) -> List[Dict[str, Any]]:
-    """
-    (内部函数) 读取并解析单个 Markdown 文件。
+def _indent_width(indent: str) -> int:
+    return len(indent.replace("\t", "    "))
 
-    Args:
-        md_file (Path): 指向 .md 文件的 Path 对象。
 
-    Returns:
-        List[Dict[str, Any]]: 在该文件中找到的、包含属性的块的列表。
-    """
-    page_name = md_file.stem
-    blocks_with_props = []
-    try:
-        with open(md_file, "r", encoding="utf-8") as f:
-            content = f.read()
-        
-        blocks = re.split(r'\n(?=- )', '\n' + content)
-
-        for block_content in blocks:
-            if "::" not in block_content:
-                continue
-            
-            properties = parse_properties(block_content)
-            if properties:
-                blocks_with_props.append({
-                    "page": page_name,
-                    "content": block_content,
-                    "properties": properties
-                })
-    except Exception as e:
-        print(f"[Core Error] Failed to process file {md_file}: {e}")
-    return blocks_with_props
-
-def scan_and_parse_graph(graph_path: str) -> Dict[str, Any]:
-    """
-    扫描整个 Logseq 图谱目录，解析所有 Markdown 文件并返回缓存数据结构。
-
-    Args:
-        graph_path (str): Logseq 知识库的根目录路径。
-
-    Returns:
-        Dict[str, Any]: 缓存数据，格式为 {file_path: {"blocks": [...]}, ...}
-    """
+def discover_scan_roots(graph_path: str) -> List[Path]:
     graph_dir = Path(graph_path)
-    cache_data = {}
-    
-    # 扫描 pages 和 journals 目录
-    dirs_to_scan = []
     pages_dir = graph_dir / "pages"
     journals_dir = graph_dir / "journals"
-    
-    if pages_dir.exists():
-        dirs_to_scan.append(pages_dir)
-    if journals_dir.exists():
-        dirs_to_scan.append(journals_dir)
-    
-    # 如果没有标准目录，扫描根目录
-    if not dirs_to_scan:
-        dirs_to_scan.append(graph_dir)
-    
-    # 收集所有 Markdown 文件
-    md_files = []
-    for scan_dir in dirs_to_scan:
-        md_files.extend(scan_dir.glob("*.md"))
-    
-    # 使用线程池并行处理文件
+
+    roots = [directory for directory in (pages_dir, journals_dir) if directory.is_dir()]
+    return roots if roots else [graph_dir]
+
+
+def should_exclude_directory(directory: Path, graph_root: Path) -> bool:
+    if directory.name in EXCLUDED_DIR_NAMES:
+        return True
+    if directory.name.startswith(".") and directory != graph_root:
+        return True
+    return False
+
+
+def iter_markdown_files(graph_path: str) -> Iterable[Path]:
+    graph_root = Path(graph_path).resolve()
+    seen: set[Path] = set()
+
+    for root in discover_scan_roots(graph_path):
+        root = root.resolve()
+        if not root.exists():
+            continue
+
+        for path in root.rglob("*.md"):
+            if path in seen:
+                continue
+            relative_parts = path.relative_to(graph_root).parts if path.is_relative_to(graph_root) else ()
+            if any(part in EXCLUDED_DIR_NAMES for part in relative_parts[:-1]):
+                continue
+            if any(part.startswith(".") for part in relative_parts[:-1]):
+                continue
+            seen.add(path)
+            yield path
+
+
+def is_path_in_graph_scope(graph_path: str, file_path: str | Path) -> bool:
+    graph_root = Path(graph_path).resolve()
+    target = Path(file_path).resolve()
+    if target.suffix.lower() != ".md":
+        return False
+
+    for root in discover_scan_roots(graph_path):
+        try:
+            target.relative_to(root.resolve())
+            return True
+        except ValueError:
+            continue
+    return False
+
+
+def _is_valid_property_key(key: str) -> bool:
+    stripped = key.strip()
+    if not stripped:
+        return False
+    return any(char.isalpha() for char in stripped)
+
+
+def _parse_property_line(line: str) -> tuple[str, str] | None:
+    match = PROPERTY_PATTERN.match(line)
+    if not match:
+        return None
+    key = match.group(1).strip()
+    value = match.group(2).strip()
+    if not _is_valid_property_key(key):
+        return None
+    return key, value
+
+
+def _extract_properties_from_line(line: str, properties: Dict[str, str]) -> bool:
+    parsed = _parse_property_line(line)
+    if not parsed:
+        return False
+    key, value = parsed
+    properties[key] = value
+    return True
+
+
+def _create_page_properties_block(md_file: Path, page_name: str, line_number: int) -> Dict[str, Any]:
+    return {
+        "page": page_name,
+        "file_path": str(md_file),
+        "block_content": "",
+        "line_start": line_number,
+        "line_end": line_number,
+        "block_path": page_name,
+        "properties": {},
+    }
+
+
+def _append_block_line(block: Dict[str, Any], line: str, line_number: int) -> None:
+    block["block_content"] = line if not block["block_content"] else f"{block['block_content']}\n{line}"
+    block["line_end"] = line_number
+
+
+def parse_file_for_properties(file_path: str) -> List[Dict[str, Any]]:
+    md_file = Path(file_path)
+    page_name = md_file.stem
+    blocks: List[Dict[str, Any]] = []
+    stack: List[Dict[str, Any]] = []
+    page_properties_block: Dict[str, Any] | None = None
+    allow_page_properties = True
+
+    try:
+        lines = md_file.read_text(encoding="utf-8").splitlines()
+    except UnicodeDecodeError:
+        lines = md_file.read_text(encoding="utf-8-sig").splitlines()
+
+    for line_number, line in enumerate(lines, start=1):
+        bullet_match = BLOCK_BULLET_PATTERN.match(line)
+        if bullet_match:
+            allow_page_properties = False
+            indent = _indent_width(bullet_match.group("indent"))
+            label = bullet_match.group("text").strip()
+
+            while stack and indent <= stack[-1]["indent"]:
+                stack.pop()
+
+            parent_path = [item["label"] for item in stack if item["label"]]
+            block = {
+                "page": page_name,
+                "file_path": str(md_file),
+                "block_content": line,
+                "line_start": line_number,
+                "line_end": line_number,
+                "block_path": " > ".join(parent_path + ([label] if label else [])),
+                "properties": {},
+                "label": label,
+            }
+            _extract_properties_from_line(label, block["properties"])
+            blocks.append(block)
+            stack.append({"indent": indent, "label": label, "block": block})
+            continue
+
+        if allow_page_properties:
+            parsed_property = _parse_property_line(line)
+            if parsed_property:
+                if page_properties_block is None:
+                    page_properties_block = _create_page_properties_block(md_file, page_name, line_number)
+                    blocks.append(page_properties_block)
+                key, value = parsed_property
+                page_properties_block["properties"][key] = value
+                _append_block_line(page_properties_block, line, line_number)
+                continue
+            if line.strip():
+                allow_page_properties = False
+            elif page_properties_block is not None and page_properties_block["block_content"]:
+                _append_block_line(page_properties_block, "", line_number)
+            if not stack:
+                continue
+
+        if not stack:
+            continue
+
+        current = stack[-1]["block"]
+        _append_block_line(current, line, line_number)
+        _extract_properties_from_line(line, current["properties"])
+
+    for block in blocks:
+        block.pop("label", None)
+
+    return [block for block in blocks if block["properties"]]
+
+
+def _process_single_file(md_file: Path) -> Dict[str, Any]:
+    blocks = parse_file_for_properties(str(md_file))
+    return {
+        "blocks": blocks,
+        "mtime": md_file.stat().st_mtime,
+    }
+
+
+def scan_and_parse_graph(graph_path: str) -> Dict[str, Any]:
+    md_files = list(iter_markdown_files(graph_path))
+    files: Dict[str, Any] = {}
+
     with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
-        futures = {executor.submit(_process_single_file, f): f for f in md_files}
+        futures = {executor.submit(_process_single_file, file): file for file in md_files}
         for future in concurrent.futures.as_completed(futures):
             md_file = futures[future]
             try:
-                blocks = future.result()
-                if blocks:
-                    cache_data[str(md_file)] = {"blocks": blocks}
-            except Exception as e:
-                print(f"[Core Error] Failed to process {md_file}: {e}")
-    
-    return cache_data
+                file_entry = future.result()
+                files[str(md_file)] = file_entry
+            except Exception:
+                files[str(md_file)] = {"blocks": [], "mtime": md_file.stat().st_mtime}
 
-def parse_file_for_properties(file_path: str) -> List[Dict[str, Any]]:
-    """
-    供外部调用的解析单个文件属性的高层次包装函数。
-    主要用于增量更新时解析变动的文件。
-    """
-    return _process_single_file(Path(file_path))
+    return files

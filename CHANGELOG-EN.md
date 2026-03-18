@@ -1,5 +1,12 @@
 # Changelog
 
+## v2.4.0 (2026-03-18)
+- **Page-Level Property Fix**: Added support for Logseq page properties placed before the first `- block`, fixing missing queries for keys such as `ai-提示词` and `提示词-经典程度`.
+- **Query UX Upgrade**: Added a case-sensitive toggle, rewrote the help popover into “syntax mode + meaning + examples”, and updated examples to better match real Logseq usage.
+- **Statistics Enhancement**: Added the new “Value Statistics” view so users can drill from global values into the property keys that use them.
+- **Cleaner Indexing**: Filters pseudo-properties such as `--:: --` and `--2:: --` so separators no longer pollute search and statistics.
+- **Release Quality**: Added regression coverage for parser, query, frontend interaction, build, and release readiness.
+
 ## v2.2.1 (2026-03)
 - **Fix**: Disabled PyWebview `private_mode` default, fixing the issue where application lost persistent `localStorage` and graph path settings upon restart.
 

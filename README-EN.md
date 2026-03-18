@@ -1,4 +1,4 @@
-# Property Query - Logseq Property Query & Statistics Tool v2.2.1
+# Property Query - Logseq Property Query & Statistics Tool v2.4.0
 
 English | [简体中文](./README.md)
 
@@ -10,6 +10,8 @@ English | [简体中文](./README.md)
 
 **A high-performance standalone desktop tool for advanced property queries and data analysis of Markdown files in Logseq knowledge bases,** presented through a modern graphical user interface (GUI). It works with any Markdown files using the `key:: value` property format.
 
+> **v2.4.0 Usability Upgrade**: Added global value statistics, page-level property parsing, a case-sensitive search toggle, and syntax-mode help. This release fixes missing page-head properties such as `ai-提示词` and filters pseudo-properties like `--:: --`.
+> **v2.3.0 Architecture Upgrade**: Rebuilt the query engine and block parser, fixing exact-match drift, nested block leakage, fixed-port startup false positives, and non-standard directory watcher gaps while adding diagnostics, reset controls, block location, and tests.
 > **v2.2.1 Hotfix**: Resolved a persistent state loss issue driven by PyWebview 4's default privacy mode, ensuring language configs and graph path data retain properly across app resets.
 > **v2.2.0 New Features**: Data storage securely isolated to APPDATA directories, robust collision mapping defenses against reserved item keys, dynamically generated application external links, and resilient incremental parsing improvements.
 
@@ -23,9 +25,13 @@ English | [简体中文](./README.md)
 
 ### 🔍 Advanced Property Query
 - **Multiple Match Modes**:
-  - `key:value` — Exact match
-  - `key~value` — Fuzzy match
+  - `key:value` — Exact match (case-insensitive by default, full-value comparison)
+  - `key~value` — Fuzzy match (case-insensitive by default, substring comparison)
   - `has:key` — Existence match
+  - `text` — Full-text search across page names, block content, property keys, and values
+- **Case-Sensitive Toggle**: An `Aa` toggle on the right side of the search box switches `has / exact / fuzzy / text` into case-sensitive mode
+- **Page-Level Property Support**: Parses Logseq page properties placed before the first `- block`, so keys such as `ai-提示词:: ...` are indexed correctly
+- **Pseudo-Property Filtering**: Only real `key:: value` pairs are indexed, while separator noise such as `--:: --` and `--2:: --` is ignored
 - **Logical Operators**: Support `AND` / `OR` for complex condition combinations
 - **Dynamic Table**:
   - Drag column headers to reorder (drag the ⋮⋮ icon)
@@ -38,6 +44,7 @@ English | [简体中文](./README.md)
 
 ### 📊 Data Statistics & Analysis
 - One-click scan to analyze all property keys in your knowledge base
+- **Value Statistics**: Analyze global value distribution and drill down into which property keys a value appears under
 - **Refresh Button**: Manually refresh statistics data
 - **Percentage Stats**: Display occurrence count and percentage of total for each key
 - **Key Search**: Real-time filtering of property key list
@@ -181,9 +188,13 @@ npm run dev
 | -------------------- | -------- | --------------------------------------------------------------- |
 | `/api/health`        | GET      | Health check for backend liveness probe                         |
 | `/api/config`        | GET/POST | Fetch/Update user config and system parameters                  |
-| `/api/build-cache`   | POST     | Trigger a full knowledge base scan and cache rebuild            |
-| `/api/search`        | POST     | Advanced query engine (Exact/Fuzzy/Existence match)             |
-| `/api/stats`         | GET      | Fetch properties distribution data for charts                   |
+| `/api/cache/build`   | POST     | Trigger a full knowledge base scan and cache rebuild            |
+| `/api/search`        | POST     | Advanced query engine with exact/fuzzy/existence/full-text modes plus a case toggle |
+| `/api/stats`         | GET      | Fetch global property-key statistics                            |
+| `/api/stats/global-values` | GET | Fetch global value statistics                                   |
+| `/api/stats/value-keys` | GET  | Fetch the key distribution for a specific value                 |
+| `/api/stats/diagnostics` | GET | Fetch data quality diagnostics                                  |
+| `/api/preferences`   | GET      | Fetch persisted preferences such as language, history, columns, and case sensitivity |
 | `/api/check-updates` | GET      | Consume the pool of changed files captured by watchdog          |
 | `/api/apply-updates` | POST     | Process file changes and hot-update in-memory cache             |
 | `/api/reset-all`     | POST     | Wipe all persisted data, configurations & cache (Factory reset) |

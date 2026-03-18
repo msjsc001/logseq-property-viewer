@@ -1,157 +1,225 @@
-import json
-from pathlib import Path
-from typing import Dict, Any, List
 import datetime
-import sys
+import json
 import os
+import shutil
+import sys
+import threading
+from pathlib import Path
+from typing import Any, Dict, List
+
+from app_constants import APP_STORAGE_NAME
+
+
+_CONFIG_LOCK = threading.Lock()
+
 
 def get_app_data_dir() -> Path:
-    """获取程序独立的用户数据存储目录"""
-    if sys.platform == 'win32':
-        base = Path(os.environ.get('APPDATA', '')) / 'PropertyQuery'
+    """Return the per-user data directory used by the application."""
+    if sys.platform == "win32":
+        base = Path(os.environ.get("APPDATA", "")) / APP_STORAGE_NAME
     else:
-        base = Path.home() / '.property_query'
+        base = Path.home() / f".{APP_STORAGE_NAME.lower()}"
     base.mkdir(parents=True, exist_ok=True)
     return base
 
-CONFIG_FILE = get_app_data_dir() / "config.json"
 
-# 自动迁移旧配置文件
+def get_log_dir() -> Path:
+    log_dir = get_app_data_dir() / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    return log_dir
+
+
+CONFIG_FILE = get_app_data_dir() / "config.json"
 _OLD_CONFIG_FILE = Path.home() / ".logseq_query_config.json"
+
+
+DEFAULT_CONFIG: Dict[str, Any] = {
+    "graph_path": "",
+    "language": "zh",
+    "query_case_sensitive": False,
+    "query_history": [],
+    "global_hidden_columns": [],
+    "column_configs": {},
+    "sidebar_collapsed": False,
+    "auto_update_enabled": False,
+    "query_sort_memory": {},
+    "column_filters": {},
+}
+
+
 if _OLD_CONFIG_FILE.exists() and not CONFIG_FILE.exists():
     try:
-        import shutil
         shutil.move(str(_OLD_CONFIG_FILE), str(CONFIG_FILE))
-    except Exception:
+    except OSError:
         pass
 
+
+def _normalize_config(config: Dict[str, Any] | None) -> Dict[str, Any]:
+    normalized = dict(DEFAULT_CONFIG)
+    if isinstance(config, dict):
+        normalized.update(config)
+    normalized["query_history"] = [
+        str(item)
+        for item in normalized.get("query_history", [])
+        if isinstance(item, str) and item.strip()
+    ][:20]
+    normalized["global_hidden_columns"] = [
+        str(item)
+        for item in normalized.get("global_hidden_columns", [])
+        if isinstance(item, str) and item
+    ]
+    if not isinstance(normalized.get("column_configs"), dict):
+        normalized["column_configs"] = {}
+    if not isinstance(normalized.get("query_sort_memory"), dict):
+        normalized["query_sort_memory"] = {}
+    if not isinstance(normalized.get("column_filters"), dict):
+        normalized["column_filters"] = {}
+    normalized["sidebar_collapsed"] = bool(normalized.get("sidebar_collapsed", False))
+    normalized["auto_update_enabled"] = bool(normalized.get("auto_update_enabled", False))
+    normalized["query_case_sensitive"] = bool(normalized.get("query_case_sensitive", False))
+    normalized["language"] = (
+        normalized.get("language")
+        if normalized.get("language") in {"zh", "en"}
+        else "zh"
+    )
+    normalized["graph_path"] = str(normalized.get("graph_path", "") or "")
+    return normalized
+
+
 def load_config() -> Dict[str, Any]:
-    """
-    从用户主目录下的 .logseq_query_config.json 文件加载配置。
-    
-    如果文件不存在或内容为无效的 JSON，则返回一个空字典。
-
-    Returns:
-        Dict[str, Any]: 包含配置项的字典。
-    """
-    if CONFIG_FILE.exists():
-        with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+    with _CONFIG_LOCK:
+        if CONFIG_FILE.exists():
             try:
-                return json.load(f)
-            except json.JSONDecodeError:
-                return {}
-    return {}
-
-def save_config(config: Dict[str, Any]):
-    """
-    将给定的配置字典保存到 .logseq_query_config.json 文件中。
-
-    Args:
-        config (Dict[str, Any]): 需要保存的配置字典。
-    """
-    with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-        json.dump(config, f, indent=4)
+                with open(CONFIG_FILE, "r", encoding="utf-8") as file:
+                    return _normalize_config(json.load(file))
+            except (json.JSONDecodeError, OSError):
+                return dict(DEFAULT_CONFIG)
+        return dict(DEFAULT_CONFIG)
 
 
-# ---- 以下为“高级属性查询-列过滤”的持久化工具函数 ----
+def save_config(config: Dict[str, Any]) -> Dict[str, Any]:
+    normalized = _normalize_config(config)
+    with _CONFIG_LOCK:
+        with open(CONFIG_FILE, "w", encoding="utf-8") as file:
+            json.dump(normalized, file, indent=4, ensure_ascii=False)
+    return normalized
+
+
+def update_config(partial: Dict[str, Any]) -> Dict[str, Any]:
+    config = load_config()
+    config.update(partial)
+    return save_config(config)
+
+
+def reset_config(
+    *,
+    clear_graph_path: bool = True,
+    clear_preferences: bool = True,
+    clear_history: bool = True,
+) -> Dict[str, Any]:
+    config = load_config()
+    if clear_graph_path:
+        config["graph_path"] = ""
+    if clear_history:
+        config["query_history"] = []
+    if clear_preferences:
+        config["language"] = DEFAULT_CONFIG["language"]
+        config["query_case_sensitive"] = DEFAULT_CONFIG["query_case_sensitive"]
+        config["global_hidden_columns"] = []
+        config["column_configs"] = {}
+        config["sidebar_collapsed"] = False
+        config["auto_update_enabled"] = False
+        config["query_sort_memory"] = {}
+        config["column_filters"] = {}
+    return save_config(config)
+
+
+def clear_ui_preferences() -> Dict[str, Any]:
+    return reset_config(
+        clear_graph_path=False,
+        clear_preferences=True,
+        clear_history=False,
+    )
+
 
 def get_column_filters(config: Dict[str, Any]) -> Dict[str, Any]:
-    """获取配置中的 column_filters 字段（若不存在则返回空字典）。"""
-    cf = config.get("column_filters")
-    return cf if isinstance(cf, dict) else {}
+    column_filters = config.get("column_filters")
+    return column_filters if isinstance(column_filters, dict) else {}
 
-def _unique(seq):
-    """保持顺序的去重"""
+
+def _unique(seq: List[Any]) -> List[Any]:
     seen = set()
-    out = []
-    for x in seq:
-        if x not in seen:
-            out.append(x)
-            seen.add(x)
+    out: List[Any] = []
+    for item in seq:
+        if item not in seen:
+            out.append(item)
+            seen.add(item)
     return out
 
+
 def get_filters_for_path(graph_path: str) -> Dict[str, Any]:
-    """
-    读取指定 graph_path 的过滤配置。
-    返回格式: {'selected': [...], 'seen': [...]}
-    """
     config = load_config()
-    cf = get_column_filters(config)
-    entry = cf.get(graph_path)
+    column_filters = get_column_filters(config)
+    entry = column_filters.get(graph_path)
     if isinstance(entry, dict):
         selected = entry.get("selected", [])
         seen = entry.get("seen", [])
-        if not isinstance(selected, list):
-            selected = []
-        if not isinstance(seen, list):
-            seen = []
-        return {"selected": selected, "seen": seen}
+        return {
+            "selected": selected if isinstance(selected, list) else [],
+            "seen": seen if isinstance(seen, list) else [],
+        }
     return {"selected": [], "seen": []}
 
+
 def save_filters_for_path(graph_path: str, selected, seen) -> None:
-    """
-    持久化指定 graph_path 的列过滤状态：
-    - selected: 当前勾选的列（保持顺序，去重）
-    - seen: 已知道的列全集（保持顺序，去重）
-    """
     config = load_config()
-    cf = get_column_filters(config)
-    selected_list = _unique(list(selected)) if isinstance(selected, (list, tuple)) else []
-    seen_list = _unique(list(seen)) if isinstance(seen, (list, tuple)) else []
-    cf[graph_path] = {
-        "selected": selected_list,
-        "seen": seen_list,
+    column_filters = get_column_filters(config)
+    column_filters[graph_path] = {
+        "selected": _unique(list(selected)) if isinstance(selected, (list, tuple)) else [],
+        "seen": _unique(list(seen)) if isinstance(seen, (list, tuple)) else [],
         "updated_at": datetime.datetime.now().isoformat(),
     }
-    config["column_filters"] = cf
+    config["column_filters"] = column_filters
     save_config(config)
 
-def clear_filters(graph_path: str = None) -> None:
-    """
-    清理列过滤偏好：
-    - 指定 graph_path: 仅清除该路径的偏好
-    - 未指定: 清除所有路径的偏好
-    """
+
+def clear_filters(graph_path: str | None = None) -> None:
     config = load_config()
     if graph_path:
-        cf = get_column_filters(config)
-        if graph_path in cf:
-            cf.pop(graph_path, None)
-        config["column_filters"] = cf
+        column_filters = get_column_filters(config)
+        column_filters.pop(graph_path, None)
+        config["column_filters"] = column_filters
     else:
         config["column_filters"] = {}
     save_config(config)
 
 
-# ---- 以下为“高级属性查询-排序记忆”的持久化工具函数 ----
-
 def get_sort_memory(config: Dict[str, Any]) -> Dict[str, Any]:
-    """获取配置中的 query_sort_memory 字段（若不存在则返回空字典）。"""
-    qsm = config.get("query_sort_memory")
-    return qsm if isinstance(qsm, dict) else {}
+    sort_memory = config.get("query_sort_memory")
+    return sort_memory if isinstance(sort_memory, dict) else {}
 
 
 def _sanitize_sort_model(sort_model: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """清理排序模型，确保字段合法且顺序稳定。"""
     sanitized: List[Dict[str, Any]] = []
     for index, item in enumerate(sort_model or []):
         if not isinstance(item, dict):
             continue
-        col = item.get("colId") or item.get("field")
+        column_id = item.get("colId") or item.get("field")
         sort = item.get("sort")
-        if not col or sort not in ("asc", "desc"):
+        if not column_id or sort not in ("asc", "desc"):
             continue
         sort_index = item.get("sortIndex")
-        sanitized.append({
-            "colId": str(col),
-            "sort": sort,
-            "sortIndex": sort_index if isinstance(sort_index, int) else index,
-        })
+        sanitized.append(
+            {
+                "colId": str(column_id),
+                "sort": sort,
+                "sortIndex": sort_index if isinstance(sort_index, int) else index,
+            }
+        )
     return sanitized
 
 
 def _sanitize_column_order(column_order: List[Any]) -> List[str]:
-    """清理列顺序列表，仅保留非空字符串并保持原有顺序。"""
     if not isinstance(column_order, list):
         return []
     filtered = [str(item) for item in column_order if isinstance(item, str) and item]
@@ -159,49 +227,36 @@ def _sanitize_column_order(column_order: List[Any]) -> List[str]:
 
 
 def get_sort_for_query(graph_path: str, query_raw: str) -> Dict[str, Any]:
-    """
-    读取指定 graph_path + 查询原文的排序配置。
-    返回格式: {'sortModel': [...], 'columnOrder': [...]}
-    """
     if not graph_path or not query_raw:
         return {"sortModel": [], "columnOrder": []}
     config = load_config()
-    qsm = get_sort_memory(config)
-    entry = qsm.get(graph_path)
-    if not isinstance(entry, dict):
+    sort_memory = get_sort_memory(config)
+    graph_entry = sort_memory.get(graph_path)
+    if not isinstance(graph_entry, dict):
         return {"sortModel": [], "columnOrder": []}
-    sort_info = entry.get(query_raw)
+    sort_info = graph_entry.get(query_raw)
     if not isinstance(sort_info, dict):
         return {"sortModel": [], "columnOrder": []}
-    sort_model = sort_info.get("sortModel")
-    column_order = sort_info.get("columnOrder")
     return {
-        "sortModel": _sanitize_sort_model(sort_model) if isinstance(sort_model, list) else [],
-        "columnOrder": _sanitize_column_order(column_order),
+        "sortModel": _sanitize_sort_model(sort_info.get("sortModel", [])),
+        "columnOrder": _sanitize_column_order(sort_info.get("columnOrder", [])),
     }
 
 
 def save_sort_for_query(
     graph_path: str,
     query_raw: str,
-    sort_model: List[Dict[str, Any]] = None,
-    column_order: List[str] = None,
+    sort_model: List[Dict[str, Any]] | None = None,
+    column_order: List[str] | None = None,
 ) -> None:
-    """
-    保存指定 graph_path + 查询原文的排序配置。
-    sort_model 来自 Ag-Grid 的 getSortModel 数据；column_order 为当前显示列顺序。
-    允许仅更新其中一项。
-    """
     if not graph_path or not query_raw:
         return
-    graph_key = graph_path.strip()
-    query_key = query_raw.strip()
     config = load_config()
-    qsm = get_sort_memory(config)
-    graph_entry = qsm.get(graph_key)
+    sort_memory = get_sort_memory(config)
+    graph_entry = sort_memory.get(graph_path)
     if not isinstance(graph_entry, dict):
         graph_entry = {}
-    entry = graph_entry.get(query_key)
+    entry = graph_entry.get(query_raw)
     if not isinstance(entry, dict):
         entry = {}
     if sort_model is not None:
@@ -209,41 +264,26 @@ def save_sort_for_query(
     if column_order is not None:
         entry["columnOrder"] = _sanitize_column_order(column_order)
     entry["updated_at"] = datetime.datetime.now().isoformat()
-    graph_entry[query_key] = entry
-    qsm[graph_key] = graph_entry
-    config["query_sort_memory"] = qsm
+    graph_entry[query_raw] = entry
+    sort_memory[graph_path] = graph_entry
+    config["query_sort_memory"] = sort_memory
     save_config(config)
 
 
-def clear_sort_memory(graph_path: str = None) -> None:
-    """
-    清除排序记忆：
-    - 指定 graph_path: 仅清除该路径下所有查询的排序记忆
-    - 未指定: 清除所有路径的排序记忆
-    """
+def clear_sort_memory(graph_path: str | None = None) -> None:
     config = load_config()
-    qsm = get_sort_memory(config)
+    sort_memory = get_sort_memory(config)
     if graph_path:
-        graph_key = graph_path.strip()
-        if graph_key in qsm:
-            qsm.pop(graph_key, None)
+        sort_memory.pop(graph_path.strip(), None)
     else:
-        qsm = {}
-    config["query_sort_memory"] = qsm
+        sort_memory = {}
+    config["query_sort_memory"] = sort_memory
     save_config(config)
 
-
-# ---- 语言设置 ----
 
 def get_language() -> str:
-    """获取当前语言设置，默认中文"""
-    config = load_config()
-    return config.get("language", "zh")
+    return load_config().get("language", "zh")
 
-def set_language(lang: str) -> None:
-    """保存语言设置"""
-    if lang not in ["zh", "en"]:
-        lang = "zh"
-    config = load_config()
-    config["language"] = lang
-    save_config(config)
+
+def set_language(lang: str) -> Dict[str, Any]:
+    return update_config({"language": lang if lang in {"zh", "en"} else "zh"})

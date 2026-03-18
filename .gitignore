@@ -55,6 +55,7 @@ npm-debug.log*
 # Temporary files
 *.tmp
 *.temp
+/.tmp-edge-profile/
 
 # Test coverage
 .coverage

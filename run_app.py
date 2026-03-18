@@ -1,165 +1,202 @@
-import subprocess
-import time
 import os
-import sys
 import socket
+import subprocess
+import sys
 import threading
+import time
+import json
+import urllib.error
+import urllib.request
 from contextlib import closing
 
-# 尝试导入 pywebview
+from app_constants import APP_IDENTIFIER, APP_NAME, APP_VERSION
+from app_logging import get_logger
+from config import get_app_data_dir, get_log_dir
+
 try:
     import webview
 except ImportError:
     print("Error: 'pywebview' module not found. Please run 'pip install pywebview'")
     sys.exit(1)
 
+
+logger = get_logger("property_query.launcher")
+
+
 def get_base_path():
-    """获取基础路径（兼容 PyInstaller 打包）"""
-    if getattr(sys, 'frozen', False):
-        # PyInstaller 打包后
+    if getattr(sys, "frozen", False):
         return sys._MEIPASS
-    else:
-        # 开发模式
-        return os.path.dirname(os.path.abspath(__file__))
+    return os.path.dirname(os.path.abspath(__file__))
 
-def check_port(host, port):
-    """检查端口是否开放"""
+
+def find_free_port() -> int:
     with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as sock:
-        sock.settimeout(1)
-        return sock.connect_ex((host, port)) == 0
+        sock.bind(("127.0.0.1", 0))
+        sock.listen(1)
+        return sock.getsockname()[1]
 
-def wait_for_service(host, port, timeout=60):
-    """等待服务启动"""
+
+def wait_for_service(base_url: str, timeout: int = 60) -> bool:
     start_time = time.time()
+    health_url = f"{base_url}/api/health"
     while time.time() - start_time < timeout:
-        if check_port(host, port):
-            return True
-        time.sleep(0.5)
+        try:
+            with urllib.request.urlopen(health_url, timeout=1) as response:
+                if response.status != 200:
+                    time.sleep(0.5)
+                    continue
+                payload = json.loads(response.read().decode("utf-8"))
+                if payload.get("app") == APP_IDENTIFIER:
+                    return True
+        except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError):
+            time.sleep(0.5)
     return False
 
-def start_backend_thread():
-    """在线程中运行后端（适用于打包模式）"""
+
+def start_backend_thread(port: int):
     base_path = get_base_path()
-    
-    # 添加路径到 sys.path
     if base_path not in sys.path:
         sys.path.insert(0, base_path)
-    
-    backend_path = os.path.join(base_path, 'backend')
+
+    backend_path = os.path.join(base_path, "backend")
     if backend_path not in sys.path:
         sys.path.insert(0, backend_path)
-    
-    # 设置静态文件路径环境变量
-    os.environ['STATIC_FILES_PATH'] = os.path.join(base_path, 'frontend', 'dist')
-    
-    # 导入并运行 uvicorn
+
+    os.environ["STATIC_FILES_PATH"] = os.path.join(base_path, "frontend", "dist")
+    os.environ["PROPERTY_QUERY_PORT"] = str(port)
+
     import uvicorn
     from backend.main import app
-    
-    uvicorn.run(app, host="127.0.0.1", port=8000, log_level="warning")
 
-def start_backend_process():
-    """启动后端进程（开发模式）"""
-    print(">> Starting Backend (Port 8000)...")
-    
-    # 隐藏窗口标志（仅 Windows）
+    logger.info("Starting embedded backend on port %s", port)
+    uvicorn.run(app, host="127.0.0.1", port=port, log_level="warning")
+
+
+def start_backend_process(port: int):
     startupinfo = None
     creationflags = 0
-    if sys.platform == 'win32':
+    if sys.platform == "win32":
         startupinfo = subprocess.STARTUPINFO()
         startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
         startupinfo.wShowWindow = subprocess.SW_HIDE
         creationflags = subprocess.CREATE_NO_WINDOW
-    
-    return subprocess.Popen(
+
+    log_dir = get_log_dir()
+    log_file = open(log_dir / "backend-stdout.log", "a", encoding="utf-8")
+
+    env = os.environ.copy()
+    env["PROPERTY_QUERY_PORT"] = str(port)
+
+    process = subprocess.Popen(
         [sys.executable, "backend/main.py"],
         cwd=os.path.dirname(os.path.abspath(__file__)),
-        env=os.environ.copy(),
+        env=env,
         startupinfo=startupinfo,
         creationflags=creationflags,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL
+        stdout=log_file,
+        stderr=log_file,
+    )
+    return process, log_file
+
+
+def ensure_supported_webview_runtime() -> dict:
+    if sys.platform != "win32":
+        return {}
+
+    try:
+        import webview.platforms.winforms as winforms
+    except Exception as exc:
+        raise RuntimeError("Failed to inspect the Windows WebView runtime") from exc
+
+    if hasattr(winforms, "_is_chromium") and winforms._is_chromium():
+        return {"gui": "edgechromium"}
+
+    raise RuntimeError(
+        "Microsoft Edge WebView2 runtime is required. Please install WebView2 and try again."
     )
 
-def main():
-    is_frozen = getattr(sys, 'frozen', False)
-    
-    if not is_frozen:
-        print("正在启动 Property Query 2.2.1 (开发模式)...")
-    
-    backend_proc = None
-    backend_thread = None
-    
+
+def close_window_after_delay(window, delay_ms: int):
+    if delay_ms <= 0:
+        return
+
+    time.sleep(delay_ms / 1000)
     try:
+        window.destroy()
+    except Exception:
+        logger.exception("Failed to close the window during automated smoke testing")
+
+
+def main():
+    is_frozen = getattr(sys, "frozen", False)
+    port = find_free_port()
+    base_url = f"http://127.0.0.1:{port}"
+    backend_process = None
+    backend_log_handle = None
+    auto_close_ms = max(int(os.environ.get("PROPERTY_QUERY_AUTO_CLOSE_MS", "0") or 0), 0)
+
+    try:
+        get_app_data_dir()
+        get_log_dir()
+
         if is_frozen:
-            # 打包模式：在线程中运行后端
-            backend_thread = threading.Thread(target=start_backend_thread, daemon=True)
+            backend_thread = threading.Thread(target=start_backend_thread, args=(port,), daemon=True)
             backend_thread.start()
         else:
-            # 开发模式：启动子进程
-            backend_proc = start_backend_process()
-        
-        # 等待服务就绪
-        if not is_frozen:
-            print(">> Waiting for services to be ready...")
-        
-        if not wait_for_service("127.0.0.1", 8000):
-            if not is_frozen:
-                print("Error: Backend failed to start. Check console for errors.")
-            raise Exception("Backend timeout")
-        
-        if not is_frozen:
-            print(">> Services Ready! Launching Window...")
-        
-        # 获取用户数据目录用于持久化 localStorage
-        from config import get_app_data_dir
-        storage_path = str(get_app_data_dir())
-        
-        # 确保目录存在
-        os.makedirs(storage_path, exist_ok=True)
-        
-        # 获取图标路径
+            backend_process, backend_log_handle = start_backend_process(port)
+
+        if not wait_for_service(base_url):
+            raise RuntimeError("Backend handshake failed")
+
         base_path = get_base_path()
-        icon_path = os.path.join(base_path, 'icon.ico')
-        if not os.path.exists(icon_path):
-            icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'icon.ico')
+        icon_path = os.path.join(base_path, "icon.ico")
         if not os.path.exists(icon_path):
             icon_path = None
-        
-        # 创建并启动独立窗口（带图标）
+
         window = webview.create_window(
-            'Property Query 2.2.1',
-            'http://127.0.0.1:8000',
-            width=1200,
-            height=800,
-            min_size=(800, 600)
+            f"{APP_NAME} {APP_VERSION}",
+            base_url,
+            width=1280,
+            height=860,
+            min_size=(900, 640),
         )
-        
-        # 使用指定的存储路径和图标启动
+
         start_params = {
-            'storage_path': storage_path,
-            'private_mode': False  # 确保关闭隐私模式，允许持久化 localStorage 和数据
+            "storage_path": str(get_app_data_dir()),
+            "private_mode": False,
         }
         if icon_path:
-            start_params['icon'] = icon_path
-        webview.start(**start_params)
-        
-    except Exception as e:
+            start_params["icon"] = icon_path
+
+        start_params.update(ensure_supported_webview_runtime())
+
+        if auto_close_ms > 0:
+            webview.start(
+                close_window_after_delay,
+                (window, auto_close_ms),
+                **start_params,
+            )
+        else:
+            webview.start(**start_params)
+    except Exception as exc:
+        logger.exception("Application startup failed: %s", exc)
         if not is_frozen:
-            print(f"Error: {e}")
+            print(f"Error: {exc}")
+            print(f"See logs in {get_log_dir()}")
     finally:
-        if not is_frozen:
-            print("\nClosing application...")
-        
-        # 终止后端进程（仅开发模式）
-        if backend_proc and sys.platform == 'win32':
-            subprocess.run(f"taskkill /F /T /PID {backend_proc.pid}", shell=True, 
-                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        elif backend_proc:
-            backend_proc.terminate()
-        
-        if not is_frozen:
-            print("Done.")
+        if backend_process:
+            if sys.platform == "win32":
+                subprocess.run(
+                    f"taskkill /F /T /PID {backend_process.pid}",
+                    shell=True,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+            else:
+                backend_process.terminate()
+        if backend_log_handle:
+            backend_log_handle.close()
+
 
 if __name__ == "__main__":
     main()

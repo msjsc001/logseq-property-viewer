@@ -1,135 +1,193 @@
 import axios from 'axios';
 
-// 配置 baseURL，开发环境指向后端端口
-// 如果是从前端 dev server (5173) 访问后端 (8000)，需要 CORS 支持 (后端已配)
-const API = axios.create({
-    baseURL: 'http://127.0.0.1:8000/api',
-    timeout: 10000,
-});
-
 export interface AppConfig {
-    graph_path: string;
-    language: string;
+  graph_path: string;
+  language: string;
+  auto_update_enabled: boolean;
 }
 
 export interface SearchResultItem {
-    id: number;
-    page: string;
-    content: string;
-    [key: string]: any; // 动态属性
+  id: number;
+  page: string;
+  block_content: string;
+  content: string;
+  file_path: string;
+  line_start?: number;
+  line_end?: number;
+  block_path: string;
+  properties: Record<string, string>;
+  [key: string]: unknown;
 }
 
 export interface SearchResponse {
-    results: SearchResultItem[];
-    count: number;
+  results: SearchResultItem[];
+  count: number;
+}
+
+export interface KeyStatsItem {
+  key: string;
+  count: number;
+  uniqueValues: number;
+}
+
+export interface KeyStatsResponse {
+  keys: KeyStatsItem[];
+  total: number;
+}
+
+export interface ValueDistributionItem {
+  value: string;
+  count: number;
+}
+
+export interface ValueDistributionResponse {
+  values: ValueDistributionItem[];
+  total: number;
+}
+
+export interface GlobalValueTopKey {
+  key: string;
+  count: number;
+}
+
+export interface GlobalValueStat {
+  value: string;
+  count: number;
+  keyCount: number;
+  topKeys: GlobalValueTopKey[];
+}
+
+export interface GlobalValueStatsResponse {
+  values: GlobalValueStat[];
+  total: number;
+}
+
+export interface ValueKeyDistributionItem {
+  key: string;
+  count: number;
+}
+
+export interface ValueKeyDistributionResponse {
+  value: string;
+  keys: ValueKeyDistributionItem[];
+  total: number;
+}
+
+export interface PreferencesResponse {
+  query_history: string[];
+  global_hidden_columns: string[];
+  column_configs: Record<string, unknown>;
+  sidebar_collapsed: boolean;
+  auto_update_enabled: boolean;
+  query_case_sensitive: boolean;
+  graph_name: string;
+  language: 'zh' | 'en';
+  data_dir: string;
+  log_dir: string;
+  cache_version: number;
+}
+
+export interface ResetOptions {
+  clear_cache?: boolean;
+  clear_logs?: boolean;
+  clear_graph_path?: boolean;
+  clear_preferences?: boolean;
+  clear_history?: boolean;
+}
+
+export interface DiagnosticsResponse {
+  emptyValues: Array<{ key: string; count: number }>;
+  caseConflicts: Array<{ normalizedKey: string; variants: string[]; count: number }>;
+  suspectedSynonyms: Array<{ normalizedKey: string; variants: string[] }>;
+  lowSignalKeys: Array<{ key: string; count: number; uniqueValues: number }>;
+  singletonKeys: Array<{ key: string; count: number }>;
+}
+
+const API = axios.create({
+  baseURL: '/api',
+  timeout: 15000,
+});
+
+export function getApiErrorMessage(error: unknown, fallback: string): string {
+  if (!axios.isAxiosError(error)) {
+    return fallback;
+  }
+
+  const detail = error.response?.data?.detail;
+  if (typeof detail === 'string' && detail.trim()) {
+    return detail;
+  }
+  if (detail && typeof detail === 'object') {
+    const message = 'message' in detail ? detail.message : undefined;
+    if (typeof message === 'string' && message.trim()) {
+      return message;
+    }
+  }
+  if (typeof error.message === 'string' && error.message.trim()) {
+    return error.message;
+  }
+  return fallback;
 }
 
 export const apiService = {
-    // 检查服务健康
-    checkHealth: async () => {
-        const res = await API.get('/health');
-        return res.data;
-    },
+  checkHealth: async () => (await API.get('/health')).data,
 
-    // 获取配置
-    getConfig: async () => {
-        const res = await API.get<AppConfig>('/config');
-        return res.data;
-    },
+  getConfig: async () => (await API.get<AppConfig>('/config')).data,
 
-    // 更新配置
-    updateConfig: async (graph_path: string) => {
-        const res = await API.post('/config', { graph_path });
-        return res.data;
-    },
+  updateConfig: async (graph_path: string) => (await API.post('/config', { graph_path })).data,
 
-    // 执行搜索
-    search: async (query: string, graph_path?: string) => {
-        const res = await API.post<SearchResponse>('/search', { query, graph_path });
-        return res.data;
-    },
+  search: async (query: string, graph_path?: string, case_sensitive = false) =>
+    (await API.post<SearchResponse>('/search', { query, graph_path, case_sensitive })).data,
 
-    // 重建缓存
-    buildCache: async (graph_path: string) => {
-        const res = await API.post('/cache/build', { graph_path });
-        return res.data;
-    },
+  buildCache: async (graph_path: string) => (await API.post('/cache/build', { graph_path })).data,
 
-    // 获取属性键统计
-    getStats: async () => {
-        const res = await API.get('/stats');
-        return res.data;
-    },
+  getStats: async () => (await API.get<KeyStatsResponse>('/stats')).data,
 
-    // 获取某个属性键的值分布
-    getValueDistribution: async (key: string) => {
-        const res = await API.get(`/stats/values/${encodeURIComponent(key)}`);
-        return res.data;
-    },
+  getDiagnostics: async () => (await API.get<DiagnosticsResponse>('/stats/diagnostics')).data,
 
-    // 清除缓存
-    clearCache: async () => {
-        const res = await API.post('/cache/clear');
-        return res.data;
-    },
+  getValueDistribution: async (key: string) =>
+    (await API.get<ValueDistributionResponse>(`/stats/values/${encodeURIComponent(key)}`)).data,
 
-    // 清除排序记忆
-    clearSortMemory: async () => {
-        const res = await API.post('/config/clear-sort-memory');
-        return res.data;
-    },
+  getGlobalValueStats: async () =>
+    (await API.get<GlobalValueStatsResponse>('/stats/global-values')).data,
 
-    // 获取用户偏好
-    getPreferences: async () => {
-        const res = await API.get('/preferences');
-        return res.data;
-    },
+  getValueKeyDistribution: async (value: string) =>
+    (await API.get<ValueKeyDistributionResponse>('/stats/value-keys', { params: { value } })).data,
 
-    // 保存查询历史
-    saveQueryHistory: async (history: string[]) => {
-        const res = await API.post('/preferences/query-history', { history });
-        return res.data;
-    },
+  clearCache: async () => (await API.post('/cache/clear')).data,
 
-    // 保存全局隐藏列
-    saveGlobalHiddenColumns: async (columns: string[]) => {
-        const res = await API.post('/preferences/global-hidden-columns', { columns });
-        return res.data;
-    },
+  clearSortMemory: async () => (await API.post('/config/clear-sort-memory')).data,
 
-    // 保存列配置
-    saveColumnConfig: async (queryKey: string, config: any) => {
-        const res = await API.post('/preferences/column-config', { query_key: queryKey, config });
-        return res.data;
-    },
+  getPreferences: async () => (await API.get<PreferencesResponse>('/preferences')).data,
 
-    // 恢复出厂设置 - 清除所有数据
-    resetAll: async () => {
-        const res = await API.post('/reset-all');
-        return res.data;
-    },
+  saveQueryHistory: async (history: string[]) =>
+    (await API.post('/preferences/query-history', { history })).data,
 
-    // 设置自动更新
-    setAutoUpdate: async (enabled: boolean) => {
-        const res = await API.post('/config/auto-update', { enabled });
-        return res.data;
-    },
+  saveGlobalHiddenColumns: async (columns: string[]) =>
+    (await API.post('/preferences/global-hidden-columns', { columns })).data,
 
-    // 检查数据源更新
-    checkUpdates: async () => {
-        const res = await API.get('/check-updates');
-        return res.data;
-    },
+  saveColumnConfig: async (queryKey: string, config: unknown) =>
+    (await API.post('/preferences/column-config', { query_key: queryKey, config })).data,
 
-    // 应用增量更新
-    applyUpdates: async () => {
-        const res = await API.post('/apply-updates');
-        return res.data;
-    },
+  saveSidebarState: async (collapsed: boolean) =>
+    (await API.post('/preferences/sidebar', { collapsed })).data,
 
-    // 打开用户数据目录
-    openDataDir: async () => {
-        const res = await API.post('/open-data-dir');
-        return res.data;
-    }
+  saveLanguage: async (language: 'zh' | 'en') =>
+    (await API.post('/preferences/language', { language })).data,
+
+  saveQueryCaseSensitive: async (case_sensitive: boolean) =>
+    (await API.post('/preferences/query-case-sensitive', { case_sensitive })).data,
+
+  resetAll: async (options?: ResetOptions) => (await API.post('/reset-all', options)).data,
+
+  setAutoUpdate: async (enabled: boolean) =>
+    (await API.post('/config/auto-update', { enabled })).data,
+
+  checkUpdates: async () => (await API.get('/check-updates')).data,
+
+  applyUpdates: async () => (await API.post('/apply-updates')).data,
+
+  openDataDir: async () => (await API.post('/open-data-dir')).data,
+
+  openLogDir: async () => (await API.post('/open-log-dir')).data,
 };
